@@ -1,0 +1,98 @@
+html {
+    -webkit-tap-highlight-color: transparent;
+}
+
+body {
+    background-image:
+        radial-gradient(ellipse 80% 50% at 50% -10%, rgba(249, 115, 22, 0.08), transparent 50%),
+        radial-gradient(ellipse 60% 50% at 100% 0%, rgba(251, 146, 60, 0.04), transparent 50%);
+    background-attachment: fixed;
+}
+
+button, a {
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+input, textarea {
+    outline: none;
+}
+
+textarea {
+    resize: vertical;
+}
+
+.tabular-nums {
+    font-variant-numeric: tabular-nums;
+}
+
+main {
+    -webkit-overflow-scrolling: touch;
+}
+
+[x-cloak] { display: none !important; }
+
+.slider-accent {
+    accent-color: #f97316;
+}
+
+.slider-accent::-webkit-slider-runnable-track {
+    height: 0.5rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.slider-accent::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    margin-top: -0.3rem;
+    height: 1.1rem;
+    width: 1.1rem;
+    border-radius: 999px;
+    border: 0;
+    background: #f97316;
+    box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.16);
+}
+
+.slider-accent::-moz-range-track {
+    height: 0.5rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.slider-accent::-moz-range-thumb {
+    height: 1.1rem;
+    width: 1.1rem;
+    border-radius: 999px;
+    border: 0;
+    background: #f97316;
+    box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.16);
+}
+
+/* Exercise diagram — crossfade between two frames to show motion */
+.exercise-frame {
+    will-change: opacity;
+    backface-visibility: hidden;
+}
+.exercise-frame-a {
+    animation: exerciseFrameA 1.8s ease-in-out infinite;
+}
+.exercise-frame-b {
+    animation: exerciseFrameB 1.8s ease-in-out infinite;
+}
+@keyframes exerciseFrameA {
+    0%, 30%  { opacity: 1; }
+    50%, 80% { opacity: 0; }
+    100%     { opacity: 1; }
+}
+@keyframes exerciseFrameB {
+    0%, 30%  { opacity: 0; }
+    50%, 80% { opacity: 1; }
+    100%     { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .exercise-frame-a, .exercise-frame-b { animation: none; }
+    .exercise-frame-a { opacity: 1; }
+    .exercise-frame-b { opacity: 0; }
+}

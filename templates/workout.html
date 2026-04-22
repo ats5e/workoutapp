@@ -1,0 +1,395 @@
+{% extends "base.html" %}
+
+{% block title %}{{ model.workout.name }} — Iron Log{% endblock %}
+
+{% block header_right %}
+<a href="{{ url_for('index') }}" class="text-sm text-slate-400 active:text-white inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 -mr-2">
+    <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    Dashboard
+</a>
+{% endblock %}
+
+{% block content %}
+<div x-data='workoutSession({{ model | tojson }})' x-init="init()" class="relative pb-8" data-image-base="{{ image_base }}">
+    <div class="space-y-4">
+        <div class="flex items-center justify-between gap-3">
+            <div class="inline-flex items-center gap-2 rounded-full border border-accent/30 bg-accent/10 px-3 py-1.5">
+                <span class="h-1.5 w-1.5 rounded-full bg-accent animate-pulse"></span>
+                <span class="text-xs font-semibold tracking-wide text-accent">WEEK <span x-text="week"></span></span>
+            </div>
+            <div class="flex items-center gap-1.5 text-[11px] text-slate-400">
+                <span :class="stage === 'warmup' ? 'text-white font-semibold' : 'text-slate-500'">WALK</span>
+                <svg viewBox="0 0 24 24" fill="none" class="h-3 w-3 text-slate-600" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+                <span :class="stage === 'strength' ? 'text-white font-semibold' : 'text-slate-500'">LIFT</span>
+                <svg viewBox="0 0 24 24" fill="none" class="h-3 w-3 text-slate-600" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+                <span :class="stage === 'cooldown' ? 'text-white font-semibold' : 'text-slate-500'">WALK</span>
+            </div>
+            <span class="font-mono tabular-nums text-[11px] text-slate-400" x-text="elapsedLabel"></span>
+        </div>
+
+        <div :class="readinessSurfaceClass()" class="rounded-3xl border p-5">
+            <div class="flex items-start justify-between gap-4">
+                <div class="min-w-0">
+                    <div class="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]" :class="pillClass(readiness.tone)">
+                        <span>Readiness</span>
+                        <span x-text="readiness.label"></span>
+                    </div>
+                    <h1 class="mt-3 font-display text-3xl font-bold text-white">{{ model.workout.name }}</h1>
+                    <p class="mt-2 text-sm" :class="readinessTextClass()" x-text="model.coach_tip"></p>
+                    {% if model.latest_session %}
+                    <p class="mt-3 text-xs text-slate-500">
+                        Last logged {{ model.latest_session.completed_at_label }} · {{ model.latest_session.duration_label }} · {{ model.latest_session.volume_label }}
+                    </p>
+                    {% endif %}
+                </div>
+                <div class="text-right">
+                    <div class="text-[10px] uppercase tracking-[0.22em] text-slate-500">Score</div>
+                    <div class="mt-1 font-display text-4xl font-bold text-white" x-text="readiness.score ?? '—'"></div>
+                </div>
+            </div>
+        </div>
+
+        <template x-if="restoredDraft">
+            <div class="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+                Resumed your saved draft so you can pick up where you left off.
+            </div>
+        </template>
+
+        <template x-if="stage === 'strength'">
+            <div>
+                <div class="mb-3 flex items-center justify-between text-[11px] text-slate-400">
+                    <span class="font-semibold tracking-wide">
+                        <span x-text="processedSets"></span> / <span x-text="totalSets"></span> sets moved through
+                    </span>
+                    <span>
+                        <span x-text="completedSets"></span> complete · <span x-text="skippedSets"></span> skipped
+                    </span>
+                </div>
+                <div class="h-1.5 w-full overflow-hidden rounded-full bg-white/5">
+                    <div class="h-full bg-gradient-to-r from-accent to-amber-400 transition-all duration-500 ease-out"
+                         :style="`width: ${progressPct}%`"></div>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <template x-if="stage === 'warmup' || stage === 'cooldown'">
+        <div class="mt-4 space-y-4">
+            <div class="overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-br from-emerald-500/10 via-white/[0.02] to-transparent">
+                <div class="p-6">
+                    <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-emerald-400" x-text="stage === 'warmup' ? 'Warm-up' : 'Cool-down'"></p>
+                    <h2 class="mt-1 font-display text-2xl font-bold text-white" x-text="stage === 'warmup' ? workout.warmup.label : workout.cooldown.label"></h2>
+                    <p class="mt-2 text-sm text-slate-400">
+                        Walk with intent so the lift feels better when the first work set lands.
+                    </p>
+
+                    <div class="relative mx-auto mt-6 h-52 w-52">
+                        <svg viewBox="0 0 100 100" class="h-full w-full -rotate-90">
+                            <circle cx="50" cy="50" r="45" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="6"/>
+                            <circle cx="50" cy="50" r="45" fill="none" stroke="url(#walkGrad)" stroke-width="6" stroke-linecap="round"
+                                    :stroke-dasharray="`${2 * Math.PI * 45}`"
+                                    :stroke-dashoffset="`${2 * Math.PI * 45 * (1 - (walk.total - walk.remaining) / walk.total)}`"
+                                    style="transition: stroke-dashoffset 1s linear;"/>
+                            <defs>
+                                <linearGradient id="walkGrad" x1="0" y1="0" x2="1" y2="1">
+                                    <stop offset="0%" stop-color="#10b981"/>
+                                    <stop offset="100%" stop-color="#34d399"/>
+                                </linearGradient>
+                            </defs>
+                        </svg>
+                        <div class="absolute inset-0 flex flex-col items-center justify-center">
+                            <div class="font-display text-5xl font-bold text-white tabular-nums" x-text="formatTime(walk.remaining)"></div>
+                            <div class="mt-1 text-[11px] uppercase tracking-wider text-slate-400" x-text="walk.active && !walk.paused ? 'Walking' : (walk.completed ? 'Complete' : walk.paused ? 'Paused' : 'Ready')"></div>
+                        </div>
+                    </div>
+
+                    <div class="mt-6 grid grid-cols-2 gap-3">
+                        <div class="rounded-2xl border border-white/5 bg-white/[0.04] p-3 text-center">
+                            <div class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Incline</div>
+                            <div class="mt-1 font-display text-xl font-bold text-white">
+                                <span x-text="stage === 'warmup' ? workout.warmup.incline_percent : workout.cooldown.incline_percent"></span><span class="text-base text-slate-500">%</span>
+                            </div>
+                        </div>
+                        <div class="rounded-2xl border border-white/5 bg-white/[0.04] p-3 text-center">
+                            <div class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Speed</div>
+                            <div class="mt-1 font-display text-xl font-bold text-white">
+                                <span x-text="stage === 'warmup' ? workout.warmup.speed_kmh : workout.cooldown.speed_kmh"></span><span class="text-base text-slate-500"> km/h</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <template x-if="!walk.completed">
+                <div class="space-y-3">
+                    <template x-if="!walk.active">
+                        <button @click="startWalk()"
+                                class="w-full rounded-2xl bg-gradient-to-br from-emerald-500 to-emerald-600 px-6 py-5 font-display text-lg font-bold text-white shadow-lg shadow-emerald-500/20 active:scale-[0.99] transition-transform">
+                            Start Walk
+                        </button>
+                    </template>
+                    <template x-if="walk.active">
+                        <button @click="pauseWalk()"
+                                class="w-full rounded-2xl border border-white/15 bg-white/5 px-6 py-5 font-display text-lg font-bold text-white active:bg-white/10">
+                            <span x-text="walk.paused ? 'Resume walk' : 'Pause walk'"></span>
+                        </button>
+                    </template>
+                    <div class="grid grid-cols-2 gap-3">
+                        <button @click="skipWalk()"
+                                class="rounded-xl border border-white/10 bg-white/5 px-4 py-4 text-sm font-semibold text-white active:bg-white/10">
+                            Skip
+                        </button>
+                        <button @click="completeWalk()"
+                                class="rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-4 text-sm font-semibold text-emerald-300 active:bg-emerald-500/20">
+                            Mark done
+                        </button>
+                    </div>
+                </div>
+            </template>
+
+            <template x-if="walk.completed">
+                <button @click="nextStage()"
+                        class="w-full rounded-2xl bg-gradient-to-br from-accent to-amber-500 px-6 py-5 font-display text-lg font-bold text-slate-950 shadow-lg shadow-accent/20 active:scale-[0.99] transition-transform">
+                    <span x-text="stage === 'warmup' ? 'Start lifting' : 'Finish workout'"></span>
+                </button>
+            </template>
+        </div>
+    </template>
+
+    <template x-if="stage === 'strength'">
+        <div class="mt-4 space-y-4">
+            <div class="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02]">
+                <div class="relative aspect-[4/3] overflow-hidden bg-slate-50">
+                    <template x-if="currentExercise.exercise_slug && !imageFailed">
+                        <div class="absolute inset-0">
+                            <img :src="`${$root.dataset.imageBase}/${currentExercise.exercise_slug}/0.jpg`"
+                                 :alt="currentExercise.name + ' — start'"
+                                 :key="currentExercise.id + '-0'"
+                                 class="exercise-frame exercise-frame-a absolute inset-0 h-full w-full object-contain"
+                                 loading="eager" decoding="async"
+                                 @error="imageFailed = true">
+                            <img :src="`${$root.dataset.imageBase}/${currentExercise.exercise_slug}/1.jpg`"
+                                 :alt="currentExercise.name + ' — end'"
+                                 :key="currentExercise.id + '-1'"
+                                 class="exercise-frame exercise-frame-b absolute inset-0 h-full w-full object-contain"
+                                 loading="eager" decoding="async"
+                                 @error="imageFailed = true">
+                        </div>
+                    </template>
+                    <template x-if="!currentExercise.exercise_slug || imageFailed">
+                        <div class="flex h-full w-full flex-col items-center justify-center gap-2 bg-slate-900 text-slate-400">
+                            <svg viewBox="0 0 24 24" fill="none" class="h-16 w-16" stroke="currentColor" stroke-width="1.5"><path d="M6 6l12 12M4 8l2-2M16 20l2-2M2 12l2 2M18 8l2-2M8 20l-2-2"/></svg>
+                            <p class="text-xs">Diagram unavailable offline</p>
+                        </div>
+                    </template>
+                    <div class="absolute left-3 top-3 rounded-full bg-slate-950/80 px-3 py-1 text-[11px] font-semibold text-slate-200 backdrop-blur">
+                        <span x-text="exerciseIdx + 1"></span> / <span x-text="workout.exercises.length"></span>
+                    </div>
+                    <template x-if="currentExercise.personal_best_label">
+                        <div class="absolute right-3 top-3 rounded-full bg-slate-950/80 px-3 py-1 text-[11px] font-semibold text-slate-200 backdrop-blur">
+                            PB <span x-text="currentExercise.personal_best_label"></span>
+                        </div>
+                    </template>
+                </div>
+
+                <div class="p-5">
+                    <h2 class="font-display text-2xl font-bold leading-tight text-white" x-text="currentExercise.name"></h2>
+                    <template x-if="currentExercise.notes">
+                        <p class="mt-1.5 text-sm leading-relaxed text-slate-400" x-text="currentExercise.notes"></p>
+                    </template>
+
+                    <div class="mt-4 grid grid-cols-3 gap-2">
+                        <div class="rounded-2xl border border-white/5 bg-white/[0.04] p-3 text-center">
+                            <div class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Set</div>
+                            <div class="mt-1 font-display text-xl font-bold text-white tabular-nums">
+                                <span x-text="setIdx + 1"></span><span class="text-base text-slate-500">/<span x-text="currentExercise.sets"></span></span>
+                            </div>
+                        </div>
+                        <div class="rounded-2xl border border-white/5 bg-white/[0.04] p-3 text-center">
+                            <div class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Reps</div>
+                            <div class="mt-1 font-display text-xl font-bold text-white" x-text="currentExercise.reps"></div>
+                        </div>
+                        <div class="rounded-2xl border border-accent/30 bg-accent/10 p-3 text-center">
+                            <div class="text-[10px] font-semibold uppercase tracking-wider text-accent">Working weight</div>
+                            <div class="mt-1 font-display text-base font-bold leading-tight text-white" x-text="currentWeightLabel"></div>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 rounded-2xl border border-white/10 bg-slate-950/50 p-4">
+                        <div class="flex items-center justify-between gap-3">
+                            <div>
+                                <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Suggested load</div>
+                                <div class="mt-1 font-display text-2xl font-bold text-white" x-text="currentSuggestedWeightLabel"></div>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <button @click="adjustWeight(-1)"
+                                        class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white active:bg-white/10">
+                                    −
+                                </button>
+                                <button @click="adjustWeight(1)"
+                                        class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white active:bg-white/10">
+                                    +
+                                </button>
+                            </div>
+                        </div>
+                        <p class="mt-3 text-xs text-slate-400" x-text="currentExerciseState.recommendationReason"></p>
+                        <div class="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-300">
+                            <span class="rounded-full bg-white/5 px-2.5 py-1">
+                                Plan <span x-text="currentExerciseState.planWeightLabel"></span>
+                            </span>
+                            <template x-if="currentExercise.last_logged_label">
+                                <span class="rounded-full bg-white/5 px-2.5 py-1">
+                                    Last <span x-text="currentExercise.last_logged_label"></span> · <span x-text="currentExercise.last_completed_label"></span>
+                                </span>
+                            </template>
+                        </div>
+                        <button @click="resetWeight()"
+                                class="mt-3 text-xs text-slate-400 underline-offset-4 active:text-white active:underline">
+                            Reset to suggested load
+                        </button>
+                    </div>
+
+                    <template x-if="currentExercise.last_completed_sets">
+                        <div class="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                            <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Last time</div>
+                            <p class="mt-2 text-sm text-slate-300">
+                                <span x-text="currentExercise.last_completed_sets"></span>/<span x-text="currentExercise.last_target_sets"></span>
+                                sets at <span x-text="currentExercise.last_logged_label"></span>
+                                · <span x-text="currentExercise.last_completed_label"></span>
+                            </p>
+                            <template x-if="currentExercise.last_notes">
+                                <p class="mt-2 text-xs text-slate-500" x-text="currentExercise.last_notes"></p>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <template x-if="resting">
+                <div class="rounded-3xl border border-accent/30 bg-gradient-to-br from-accent/15 via-accent/5 to-transparent p-6 text-center">
+                    <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-accent">Rest</p>
+                    <div class="mt-1 font-display text-7xl font-bold leading-none text-white tabular-nums"
+                         :class="restRemaining <= 5 ? 'animate-pulse text-accent' : ''"
+                         x-text="formatTime(restRemaining)"></div>
+                    <p class="mt-2 text-sm text-slate-400">
+                        Next: Set <span x-text="nextSetLabel"></span> · <span x-text="nextExerciseName"></span>
+                    </p>
+                    <div class="mt-5 grid grid-cols-3 gap-2">
+                        <button @click="adjustRest(-15)" class="rounded-xl border border-white/10 bg-white/5 px-2 py-3 text-sm font-semibold text-white active:bg-white/10">−15s</button>
+                        <button @click="skipRest()" class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-accent px-3 py-3 text-sm font-bold text-slate-950 active:bg-accent-glow">
+                            Skip
+                            <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4l10 8-10 8V4zM19 5v14"/></svg>
+                        </button>
+                        <button @click="adjustRest(15)" class="rounded-xl border border-white/10 bg-white/5 px-2 py-3 text-sm font-semibold text-white active:bg-white/10">+15s</button>
+                    </div>
+                </div>
+            </template>
+
+            <template x-if="!resting">
+                <div class="space-y-3">
+                    <button @click="completeSet()"
+                            class="w-full rounded-2xl bg-gradient-to-br from-accent to-amber-500 px-6 py-5 font-display text-lg font-bold text-slate-950 shadow-lg shadow-accent/20 active:scale-[0.99] active:brightness-110 transition-transform">
+                        Complete set and start rest
+                    </button>
+                    <div class="grid grid-cols-2 gap-3">
+                        <button @click="prevSet()" :disabled="historyStack.length === 0"
+                                class="rounded-xl border border-white/10 bg-white/5 px-4 py-4 text-sm font-semibold text-white active:bg-white/10 disabled:opacity-40">
+                            Undo last action
+                        </button>
+                        <button @click="skipSet()"
+                                class="rounded-xl border border-white/10 bg-white/5 px-4 py-4 text-sm font-semibold text-white active:bg-white/10">
+                            Skip set
+                        </button>
+                    </div>
+                </div>
+            </template>
+
+            <div class="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
+                <div class="flex items-center justify-between gap-3">
+                    <div>
+                        <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-accent/80">Session Notes</p>
+                        <h3 class="mt-1 font-display text-lg font-bold text-white">Log what mattered today</h3>
+                    </div>
+                    <div class="text-xs text-slate-500" x-text="draftSavedAt ? 'Draft protected' : 'Autosaves as you go'"></div>
+                </div>
+                <textarea x-model="sessionNote"
+                          @input.debounce.400ms="persistDraft()"
+                          rows="4"
+                          class="mt-4 w-full rounded-2xl border border-white/10 bg-slate-950/60 px-3 py-3 text-sm text-white placeholder:text-slate-500"
+                          placeholder="Examples: bench felt snappy, left hamstring tight, deadlifts flew, sleep was rough but still moved well."></textarea>
+                <div class="mt-3 grid grid-cols-3 gap-2 text-xs text-slate-400">
+                    <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
+                        Warm-up tracked
+                        <div class="mt-1 text-white" x-text="formatTime(warmupActualSeconds)"></div>
+                    </div>
+                    <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
+                        Completed sets
+                        <div class="mt-1 text-white" x-text="completedSets"></div>
+                    </div>
+                    <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
+                        Session volume
+                        <div class="mt-1 text-white" x-text="volumeLabel"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <template x-if="stage === 'done'">
+        <div class="mt-4 rounded-3xl border border-white/10 bg-gradient-to-br from-accent/10 via-white/[0.02] to-transparent p-8">
+            <div class="mx-auto mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-accent/20 text-accent">
+                <svg viewBox="0 0 24 24" fill="none" class="h-8 w-8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+            </div>
+            <h2 class="text-center font-display text-3xl font-bold text-white">Session complete.</h2>
+            <p class="mt-2 text-center text-slate-400">
+                Week <span x-text="week"></span> · <span x-text="completedSets"></span>/<span x-text="totalSets"></span> sets · <span x-text="elapsedLabel"></span>
+            </p>
+
+            <div class="mt-6 grid grid-cols-2 gap-3">
+                <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-4 text-center">
+                    <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Volume</div>
+                    <div class="mt-1 font-display text-2xl font-bold text-white" x-text="volumeLabel"></div>
+                </div>
+                <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-4 text-center">
+                    <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Walk total</div>
+                    <div class="mt-1 font-display text-2xl font-bold text-white" x-text="formatTime(warmupActualSeconds + cooldownActualSeconds)"></div>
+                </div>
+            </div>
+
+            <div class="mt-6 rounded-2xl border border-white/10 bg-slate-950/50 p-5">
+                <template x-if="saving">
+                    <p class="text-sm text-slate-300">Saving your workout and updating your training history...</p>
+                </template>
+                <template x-if="saved && saveResult">
+                    <div class="space-y-4">
+                        <p class="text-sm text-emerald-300">Workout saved. Your next recommendation will use this session.</p>
+                        <p class="text-sm text-slate-300" x-text="saveResult.coach_note"></p>
+                        <template x-if="saveResult.achievements && saveResult.achievements.length">
+                            <div class="flex flex-wrap gap-2">
+                                <template x-for="achievement in saveResult.achievements" :key="achievement">
+                                    <span class="rounded-full border border-accent/20 bg-accent/10 px-2.5 py-1 text-[11px] text-accent" x-text="achievement"></span>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+                <template x-if="saveError">
+                    <div class="space-y-3">
+                        <p class="text-sm text-rose-300" x-text="saveError"></p>
+                        <button @click="saveSession()"
+                                class="rounded-xl bg-white/10 px-4 py-3 text-sm font-semibold text-white">
+                            Retry save
+                        </button>
+                    </div>
+                </template>
+            </div>
+
+            <div class="mt-6 flex flex-col gap-3">
+                <a href="{{ url_for('index') }}" class="inline-flex items-center justify-center rounded-xl bg-accent px-5 py-4 font-semibold text-slate-950 active:bg-accent-glow">Back to dashboard</a>
+            </div>
+        </div>
+    </template>
+</div>
+
+<script src="{{ url_for('static', filename='js/workout.js') }}"></script>
+{% endblock %}

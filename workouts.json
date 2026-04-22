@@ -1,0 +1,311 @@
+{
+  "image_base": "https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/exercises",
+  "defaults": {
+    "warmup": {
+      "label": "Warm-up Incline Walk",
+      "minutes": 15,
+      "incline_percent": 8,
+      "speed_kmh": 4.5
+    },
+    "cooldown": {
+      "label": "Cool-down Incline Walk",
+      "minutes": 15,
+      "incline_percent": 5,
+      "speed_kmh": 4.0
+    }
+  },
+  "workouts": [
+    {
+      "id": "day-1-push",
+      "name": "Day 1 — Push",
+      "description": "Chest · Shoulders · Triceps",
+      "target_minutes": 60,
+      "exercises": [
+        {
+          "id": "barbell-bench-press",
+          "name": "Barbell Bench Press",
+          "exercise_slug": "Barbell_Bench_Press_-_Medium_Grip",
+          "sets": 4,
+          "reps": "8",
+          "weight": 47.5,
+          "weight_format": "{w} kg",
+          "progression_kg": 2.5,
+          "progression_cap": 80,
+          "rest_seconds": 150,
+          "notes": "Control the descent, brief pause on the chest."
+        },
+        {
+          "id": "incline-db-press",
+          "name": "Incline Dumbbell Press",
+          "exercise_slug": "Incline_Dumbbell_Press",
+          "sets": 3,
+          "reps": "10",
+          "weight": 18,
+          "weight_format": "{w} kg / hand",
+          "progression_kg": 1,
+          "progression_cap": 30,
+          "rest_seconds": 90,
+          "notes": "30° bench. Squeeze at the top."
+        },
+        {
+          "id": "seated-db-shoulder-press",
+          "name": "Seated Dumbbell Shoulder Press",
+          "exercise_slug": "Seated_Dumbbell_Press",
+          "sets": 3,
+          "reps": "10",
+          "weight": 16,
+          "weight_format": "{w} kg / hand",
+          "progression_kg": 1,
+          "progression_cap": 26,
+          "rest_seconds": 90,
+          "notes": "Core braced. Press straight up, no arch."
+        },
+        {
+          "id": "lateral-raises",
+          "name": "Lateral Raises",
+          "exercise_slug": "Side_Lateral_Raise",
+          "sets": 3,
+          "reps": "12–15",
+          "weight": 6,
+          "weight_format": "{w} kg / hand",
+          "progression_kg": 0.5,
+          "progression_cap": 12,
+          "rest_seconds": 60,
+          "notes": "Lead with the elbows. No swing."
+        },
+        {
+          "id": "tricep-rope-pushdown",
+          "name": "Tricep Rope Pushdown",
+          "exercise_slug": "Triceps_Pushdown",
+          "sets": 3,
+          "reps": "12",
+          "weight": 20,
+          "weight_format": "{w} kg",
+          "progression_kg": 2.5,
+          "progression_cap": 40,
+          "rest_seconds": 60,
+          "notes": "Elbows pinned to ribs. Flare the rope at the bottom."
+        }
+      ]
+    },
+    {
+      "id": "day-2-pull",
+      "name": "Day 2 — Pull",
+      "description": "Back · Biceps",
+      "target_minutes": 60,
+      "exercises": [
+        {
+          "id": "deadlift",
+          "name": "Conventional Deadlift",
+          "exercise_slug": "Barbell_Deadlift",
+          "sets": 3,
+          "reps": "5",
+          "weight": 60,
+          "weight_format": "{w} kg",
+          "progression_kg": 5,
+          "progression_cap": 120,
+          "rest_seconds": 180,
+          "notes": "Full reset between reps. Neutral spine, hips & shoulders rise together."
+        },
+        {
+          "id": "lat-pulldown",
+          "name": "Lat Pulldown (wide grip)",
+          "exercise_slug": "Wide-Grip_Lat_Pulldown",
+          "sets": 4,
+          "reps": "10",
+          "weight": 50,
+          "weight_format": "{w} kg",
+          "progression_kg": 2.5,
+          "progression_cap": 80,
+          "rest_seconds": 90,
+          "notes": "Drive elbows down to the floor, chest proud."
+        },
+        {
+          "id": "single-arm-db-row",
+          "name": "Single-arm Dumbbell Row",
+          "exercise_slug": "One-Arm_Dumbbell_Row",
+          "sets": 3,
+          "reps": "10 / side",
+          "weight": 22,
+          "weight_format": "{w} kg",
+          "progression_kg": 1,
+          "progression_cap": 35,
+          "rest_seconds": 90,
+          "notes": "Row to the hip. Don't rotate the torso."
+        },
+        {
+          "id": "face-pulls",
+          "name": "Face Pulls",
+          "exercise_slug": "Face_Pull",
+          "sets": 3,
+          "reps": "15",
+          "weight": 15,
+          "weight_format": "{w} kg",
+          "progression_kg": 1,
+          "progression_cap": 25,
+          "rest_seconds": 60,
+          "notes": "Shoulder health. High elbows, external rotation."
+        },
+        {
+          "id": "db-bicep-curl",
+          "name": "Dumbbell Bicep Curl",
+          "exercise_slug": "Dumbbell_Bicep_Curl",
+          "sets": 3,
+          "reps": "10",
+          "weight": 10,
+          "weight_format": "{w} kg / hand",
+          "progression_kg": 0.5,
+          "progression_cap": 18,
+          "rest_seconds": 60,
+          "notes": "Strict. No swing, no shoulder shrug."
+        }
+      ]
+    },
+    {
+      "id": "day-3-lower",
+      "name": "Day 3 — Lower",
+      "description": "Posterior chain · No squats",
+      "target_minutes": 60,
+      "exercises": [
+        {
+          "id": "romanian-deadlift",
+          "name": "Romanian Deadlift",
+          "exercise_slug": "Romanian_Deadlift",
+          "sets": 4,
+          "reps": "8",
+          "weight": 55,
+          "weight_format": "{w} kg",
+          "progression_kg": 2.5,
+          "progression_cap": 100,
+          "rest_seconds": 120,
+          "notes": "Hinge at hips. Soft knees. Feel the hamstring stretch."
+        },
+        {
+          "id": "barbell-hip-thrust",
+          "name": "Barbell Hip Thrust",
+          "exercise_slug": "Barbell_Hip_Thrust",
+          "sets": 3,
+          "reps": "10",
+          "weight": 60,
+          "weight_format": "{w} kg",
+          "progression_kg": 5,
+          "progression_cap": 120,
+          "rest_seconds": 120,
+          "notes": "Drive through heels. Squeeze glutes at the top, ribs down."
+        },
+        {
+          "id": "leg-press",
+          "name": "Leg Press (feet high)",
+          "exercise_slug": "Leg_Press",
+          "sets": 3,
+          "reps": "12",
+          "weight": 100,
+          "weight_format": "{w} kg",
+          "progression_kg": 5,
+          "progression_cap": 180,
+          "rest_seconds": 90,
+          "notes": "Feet high on platform for posterior chain emphasis."
+        },
+        {
+          "id": "walking-lunges",
+          "name": "Walking Lunges",
+          "exercise_slug": "Dumbbell_Lunges",
+          "sets": 3,
+          "reps": "10 / leg",
+          "weight": 12,
+          "weight_format": "{w} kg / hand",
+          "progression_kg": 1,
+          "progression_cap": 22,
+          "rest_seconds": 90,
+          "notes": "Long stride. Front knee tracks over toes, not past them."
+        },
+        {
+          "id": "standing-calf-raise",
+          "name": "Standing Calf Raise",
+          "exercise_slug": "Standing_Calf_Raises",
+          "sets": 3,
+          "reps": "15",
+          "weight": 15,
+          "weight_format": "BW + {w} kg",
+          "progression_kg": 2.5,
+          "progression_cap": 40,
+          "rest_seconds": 60,
+          "notes": "Full stretch at the bottom, full contraction at the top."
+        }
+      ]
+    },
+    {
+      "id": "day-4-upper",
+      "name": "Day 4 — Upper",
+      "description": "Arms & shoulder emphasis",
+      "target_minutes": 60,
+      "exercises": [
+        {
+          "id": "incline-barbell-bench",
+          "name": "Incline Barbell Bench Press",
+          "exercise_slug": "Barbell_Incline_Bench_Press_-_Medium_Grip",
+          "sets": 4,
+          "reps": "8",
+          "weight": 40,
+          "weight_format": "{w} kg",
+          "progression_kg": 2.5,
+          "progression_cap": 70,
+          "rest_seconds": 120,
+          "notes": "Upper chest emphasis. Controlled descent."
+        },
+        {
+          "id": "pull-ups",
+          "name": "Pull-ups (assisted if needed)",
+          "exercise_slug": "Pullups",
+          "sets": 4,
+          "reps": "6–8",
+          "weight": 0,
+          "weight_format": "bodyweight",
+          "progression_kg": 0,
+          "progression_cap": 0,
+          "rest_seconds": 120,
+          "notes": "Aim to add 1 unassisted rep weekly."
+        },
+        {
+          "id": "arnold-press",
+          "name": "Arnold Press",
+          "exercise_slug": "Arnold_Dumbbell_Press",
+          "sets": 3,
+          "reps": "10",
+          "weight": 12,
+          "weight_format": "{w} kg / hand",
+          "progression_kg": 1,
+          "progression_cap": 22,
+          "rest_seconds": 90,
+          "notes": "Rotate palms out through the press. Full shoulder ROM."
+        },
+        {
+          "id": "ez-preacher-curl",
+          "name": "EZ-bar Preacher Curl",
+          "exercise_slug": "Preacher_Curl",
+          "sets": 3,
+          "reps": "10",
+          "weight": 20,
+          "weight_format": "{w} kg total",
+          "progression_kg": 2.5,
+          "progression_cap": 40,
+          "rest_seconds": 60,
+          "notes": "Strict form. Don't bounce out of the stretch."
+        },
+        {
+          "id": "ez-skullcrushers",
+          "name": "EZ-bar Skullcrushers",
+          "exercise_slug": "EZ-Bar_Skullcrusher",
+          "sets": 3,
+          "reps": "10",
+          "weight": 20,
+          "weight_format": "{w} kg total",
+          "progression_kg": 2.5,
+          "progression_cap": 40,
+          "rest_seconds": 60,
+          "notes": "Lower behind the head for long-head stretch."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "name": "Iron Log",
+  "short_name": "Iron Log",
+  "description": "A personalized workout dashboard with readiness, history, and logged training sessions.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "icons": [
+    {
+      "src": "/static/icons/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

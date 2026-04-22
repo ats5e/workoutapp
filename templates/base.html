@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+    <meta name="theme-color" content="#020617">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Iron Log">
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+    <link rel="icon" href="{{ url_for('static', filename='icons/app-icon.svg') }}" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/app-icon.svg') }}">
+    <title>{% block title %}Iron Log{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+                        display: ['"Space Grotesk"', 'Inter', 'sans-serif']
+                    },
+                    colors: {
+                        accent: {
+                            DEFAULT: '#f97316',
+                            glow: '#fb923c'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    <script>
+        if ("serviceWorker" in navigator) {
+            window.addEventListener("load", () => {
+                navigator.serviceWorker.register("{{ url_for('static', filename='service-worker.js') }}");
+            });
+        }
+    </script>
+</head>
+<body class="h-full font-sans text-slate-100 antialiased selection:bg-accent/40 overscroll-none">
+    <div class="min-h-full flex flex-col" style="padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom);">
+        <header class="sticky top-0 z-20 backdrop-blur-xl bg-slate-950/75 border-b border-white/5">
+            <div class="mx-auto max-w-xl px-4 py-3 flex items-center justify-between">
+                <a href="{{ url_for('index') }}" class="flex items-center gap-2.5 group">
+                    <span class="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-accent to-amber-500 shadow-lg shadow-accent/20">
+                        <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4 text-slate-950" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M4 8l2-2M16 20l2-2M2 12l2 2M18 8l2-2M8 20l-2-2"/></svg>
+                    </span>
+                    <span class="font-display text-lg font-semibold tracking-tight">Iron Log</span>
+                </a>
+                {% block header_right %}{% endblock %}
+            </div>
+        </header>
+
+        <main class="flex-1 mx-auto w-full max-w-xl px-4 py-5">
+            {% block content %}{% endblock %}
+        </main>
+
+        <footer class="mx-auto w-full max-w-xl px-4 py-5 text-xs text-slate-500">
+            {% block footer %}
+            <div class="flex items-center justify-between gap-3">
+                <span>Iron Log keeps drafts, history, and coaching cues on this device.</span>
+                <span class="text-slate-600">PWA-ready</span>
+            </div>
+            {% endblock %}
+        </footer>
+    </div>
+</body>
+</html>
