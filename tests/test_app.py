@@ -23,7 +23,34 @@ class IronLogAppTests(unittest.TestCase):
         self.assertEqual(home.status_code, 200)
         self.assertEqual(workout.status_code, 200)
         self.assertIn(b"Daily Check-in", home.data)
+        self.assertIn(b"Exercise Overview", workout.data)
+        self.assertIn(b"Target RIR", workout.data)
+        self.assertIn(b"Suggested", workout.data)
         self.assertIn(b"Session Notes", workout.data)
+        self.assertNotIn(b"Start Walk", workout.data)
+
+    def test_workout_program_matches_requested_rotation(self):
+        dashboard = self.client.get("/api/dashboard").get_json()
+        program = app.load_program()
+
+        self.assertGreaterEqual(len(program["workouts"]), 6)
+        for workout in program["workouts"]:
+            self.assertEqual(workout["target_minutes"], 45)
+            self.assertEqual(workout["warmup"]["minutes"], 0)
+            self.assertEqual(workout["cooldown"]["minutes"], 0)
+            self.assertTrue(workout.get("hypertrophy_focus"))
+            self.assertGreaterEqual(len(workout.get("session_tips", [])), 3)
+            for exercise in workout["exercises"]:
+                self.assertNotIn("squat", exercise["name"].lower())
+                self.assertIsInstance(exercise["weight"], (int, float))
+                self.assertTrue(exercise.get("target_rir"))
+                self.assertTrue(exercise.get("tempo"))
+                self.assertTrue(exercise.get("muscle_focus"))
+                self.assertTrue(exercise.get("hypertrophy_tip"))
+                self.assertTrue(exercise.get("progression_rule"))
+
+        for workout in dashboard["workouts"]:
+            self.assertEqual(workout["total_session_minutes"], 45)
 
     def test_profile_and_checkin_update_dashboard(self):
         profile_response = self.client.post(
@@ -101,7 +128,7 @@ class IronLogAppTests(unittest.TestCase):
         history = self.client.get("/api/history").get_json()
 
         self.assertEqual(save_response.status_code, 201)
-        self.assertEqual(history["sessions"][0]["workout_name"], "Day 1 — Push")
+        self.assertEqual(history["sessions"][0]["workout_name"], "Day 1 - Push Strength")
         self.assertEqual(workout["exercises"][0]["last_logged_label"], "52.5 kg")
         self.assertEqual(workout["exercises"][0]["personal_best_label"], "52.5 kg")
         self.assertEqual(workout["latest_session"]["completed_sets"], 7)

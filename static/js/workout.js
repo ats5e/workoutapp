@@ -246,7 +246,7 @@ function workoutSession(initialModel) {
         readiness: deepCopy(initialModel.readiness || {}),
         profile: deepCopy(initialModel.profile || {}),
         latestSession: initialModel.latest_session || null,
-        stage: "warmup",
+        stage: "strength",
         exerciseIdx: 0,
         setIdx: 0,
         resting: false,
@@ -296,7 +296,10 @@ function workoutSession(initialModel) {
 
             if (!this.restoreDraft()) {
                 this.startTime = Date.now();
-                this.initWalk(this.workout.warmup);
+                if (this.hasTimedWalk(this.workout.warmup)) {
+                    this.stage = "warmup";
+                    this.initWalk(this.workout.warmup);
+                }
             }
 
             this.elapsedInterval = setInterval(() => {
@@ -384,8 +387,12 @@ function workoutSession(initialModel) {
             };
         },
 
+        hasTimedWalk(cfg) {
+            return safeNumber(cfg?.minutes, 0) > 0;
+        },
+
         initWalk(cfg) {
-            const minutes = (cfg && cfg.minutes) || 15;
+            const minutes = safeNumber(cfg?.minutes, 0);
             this.walk.total = minutes * 60;
             this.walk.remaining = minutes * 60;
             this.walk.active = false;
@@ -442,8 +449,14 @@ function workoutSession(initialModel) {
                 this.stage = "strength";
                 clearInterval(this.walk.interval);
             } else if (this.stage === "strength") {
-                this.stage = "cooldown";
-                this.initWalk(this.workout.cooldown);
+                if (this.hasTimedWalk(this.workout.cooldown)) {
+                    this.stage = "cooldown";
+                    this.initWalk(this.workout.cooldown);
+                } else {
+                    this.stage = "done";
+                    this.teardown();
+                    this.saveSession();
+                }
             } else if (this.stage === "cooldown") {
                 this.cooldownActualSeconds = this.captureWalkProgress();
                 this.stage = "done";
@@ -505,6 +518,9 @@ function workoutSession(initialModel) {
             this.restDuration = snapshot.restDuration;
             this.imageFailed = snapshot.imageFailed;
             this.exerciseStates = deepCopy(snapshot.exerciseStates);
+            if (this.resting && this.restRemaining > 0) {
+                this.startRest(this.restRemaining);
+            }
             this.persistDraft();
         },
 
@@ -552,10 +568,75 @@ function workoutSession(initialModel) {
             return Math.min(100, (this.processedSets / this.totalSets) * 100);
         },
 
+        exerciseProcessedSets(index) {
+            const state = this.exerciseStates[index] || {};
+            return safeNumber(state.completedSets, 0) + safeNumber(state.skippedSets, 0);
+        },
+
+        exerciseProgressPct(index) {
+            const exercise = this.workout.exercises[index] || {};
+            const sets = safeNumber(exercise.sets, 0);
+            if (sets === 0) return 0;
+            return Math.min(100, (this.exerciseProcessedSets(index) / sets) * 100);
+        },
+
+        exerciseProgressLabel(index) {
+            const exercise = this.workout.exercises[index] || {};
+            const processed = this.exerciseProcessedSets(index);
+            return `${Math.min(processed, exercise.sets || 0)}/${exercise.sets || 0} sets`;
+        },
+
+        exerciseWeightLabel(index) {
+            const exercise = this.workout.exercises[index] || {};
+            const state = this.exerciseStates[index] || {};
+            return state.workingWeightLabel || formatWeight(exercise, state.workingWeight || 0);
+        },
+
+        exerciseOverviewClass(index) {
+            if (index === this.exerciseIdx) {
+                return "border-accent/40 bg-accent/10";
+            }
+            if (this.isExerciseComplete(index)) {
+                return "border-emerald-500/20 bg-emerald-500/10";
+            }
+            return "border-white/10 bg-slate-950/45 active:bg-white/5";
+        },
+
+        nextSetIndexForExercise(index) {
+            const exercise = this.workout.exercises[index] || {};
+            const maxSetIndex = Math.max(0, safeNumber(exercise.sets, 1) - 1);
+            return Math.min(this.exerciseProcessedSets(index), maxSetIndex);
+        },
+
+        isExerciseComplete(index) {
+            const exercise = this.workout.exercises[index] || {};
+            return this.exerciseProcessedSets(index) >= safeNumber(exercise.sets, 0);
+        },
+
+        get currentExerciseDone() {
+            return this.isExerciseComplete(this.exerciseIdx);
+        },
+
+        get allSetsProcessed() {
+            return this.totalSets > 0 && this.processedSets >= this.totalSets;
+        },
+
+        findNextPendingExerciseIndex(startIndex = 0) {
+            const total = this.workout.exercises.length;
+            if (total === 0) return -1;
+            for (let offset = 0; offset < total; offset += 1) {
+                const index = (startIndex + offset + total) % total;
+                if (!this.isExerciseComplete(index)) {
+                    return index;
+                }
+            }
+            return -1;
+        },
+
         get nextExercise() {
-            const exercise = this.currentExercise;
-            if (this.setIdx + 1 < exercise.sets) return exercise;
-            return this.workout.exercises[this.exerciseIdx + 1] || null;
+            if (!this.currentExerciseDone) return this.currentExercise;
+            const nextIndex = this.findNextPendingExerciseIndex(this.exerciseIdx + 1);
+            return nextIndex === -1 ? null : this.workout.exercises[nextIndex];
         },
 
         get nextExerciseName() {
@@ -563,9 +644,11 @@ function workoutSession(initialModel) {
         },
 
         get nextSetLabel() {
-            const exercise = this.currentExercise;
-            if (this.setIdx + 1 < exercise.sets) return this.setIdx + 2;
-            return 1;
+            if (!this.currentExerciseDone) {
+                return this.nextSetIndexForExercise(this.exerciseIdx) + 1;
+            }
+            const nextIndex = this.findNextPendingExerciseIndex(this.exerciseIdx + 1);
+            return nextIndex === -1 ? 1 : this.nextSetIndexForExercise(nextIndex) + 1;
         },
 
         get elapsedLabel() {
@@ -606,6 +689,18 @@ function workoutSession(initialModel) {
             return tonePillClass(tone);
         },
 
+        selectExercise(index) {
+            if (!this.workout.exercises[index]) return;
+            if (this.exerciseIdx === index && !this.resting) return;
+            this.historyStack.push(this.snapshotState());
+            clearInterval(this.restInterval);
+            this.resting = false;
+            this.exerciseIdx = index;
+            this.setIdx = this.nextSetIndexForExercise(index);
+            this.imageFailed = false;
+            this.persistDraft();
+        },
+
         adjustWeight(direction) {
             const current = this.currentExerciseState;
             const step = current.step || this.currentExercise.progression_kg || 0.5;
@@ -624,13 +719,11 @@ function workoutSession(initialModel) {
         },
 
         completeSet() {
+            if (this.currentExerciseDone) return;
             this.historyStack.push(this.snapshotState());
             this.currentExerciseState.completedSets += 1;
 
-            const lastSetOfExercise = this.setIdx + 1 >= this.currentExercise.sets;
-            const lastExercise = this.exerciseIdx + 1 >= this.workout.exercises.length;
-
-            if (lastSetOfExercise && lastExercise) {
+            if (this.allSetsProcessed) {
                 this.playChime(true);
                 if (navigator.vibrate) navigator.vibrate([100, 50, 100, 50, 200]);
                 this.nextStage();
@@ -684,22 +777,25 @@ function workoutSession(initialModel) {
         },
 
         advance() {
-            if (this.setIdx + 1 < this.currentExercise.sets) {
-                this.setIdx += 1;
-            } else {
-                this.exerciseIdx += 1;
-                this.setIdx = 0;
-                this.imageFailed = false;
+            if (!this.currentExerciseDone) {
+                this.setIdx = this.nextSetIndexForExercise(this.exerciseIdx);
+                return;
             }
+            const nextIndex = this.findNextPendingExerciseIndex(this.exerciseIdx + 1);
+            if (nextIndex === -1) {
+                this.nextStage();
+                return;
+            }
+            this.exerciseIdx = nextIndex;
+            this.setIdx = this.nextSetIndexForExercise(nextIndex);
+            this.imageFailed = false;
         },
 
         skipSet() {
+            if (this.currentExerciseDone) return;
             this.historyStack.push(this.snapshotState());
             this.currentExerciseState.skippedSets += 1;
-            if (
-                this.setIdx + 1 >= this.currentExercise.sets &&
-                this.exerciseIdx + 1 >= this.workout.exercises.length
-            ) {
+            if (this.allSetsProcessed) {
                 this.nextStage();
             } else {
                 this.advance();
@@ -747,6 +843,13 @@ function workoutSession(initialModel) {
 
             try {
                 const draft = JSON.parse(raw);
+                if (
+                    Array.isArray(draft.exerciseStates) &&
+                    draft.exerciseStates.length !== this.workout.exercises.length
+                ) {
+                    localStorage.removeItem(this.draftKey);
+                    return false;
+                }
                 const shouldRestore = confirm(
                     "Resume your in-progress workout? Your previous session draft is still saved."
                 );
@@ -755,7 +858,13 @@ function workoutSession(initialModel) {
                     return false;
                 }
 
-                this.stage = draft.stage || "warmup";
+                this.stage = draft.stage || "strength";
+                if (this.stage === "warmup" && !this.hasTimedWalk(this.workout.warmup)) {
+                    this.stage = "strength";
+                }
+                if (this.stage === "cooldown" && !this.hasTimedWalk(this.workout.cooldown)) {
+                    this.stage = "strength";
+                }
                 this.exerciseIdx = safeNumber(draft.exerciseIdx, 0);
                 this.setIdx = safeNumber(draft.setIdx, 0);
                 this.resting = Boolean(draft.resting);
@@ -779,7 +888,11 @@ function workoutSession(initialModel) {
                 if (this.resting && this.restRemaining > 0) {
                     this.startRest(this.restRemaining);
                 }
-                if (this.walk.active && !this.walk.completed) {
+                if (
+                    (this.stage === "warmup" || this.stage === "cooldown") &&
+                    this.walk.active &&
+                    !this.walk.completed
+                ) {
                     this.startWalk();
                     if (this.walk.paused) this.walk.paused = true;
                 }

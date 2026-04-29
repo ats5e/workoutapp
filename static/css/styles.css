@@ -1,5 +1,10 @@
+*, *::before, *::after {
+    box-sizing: border-box;
+}
+
 html {
     -webkit-tap-highlight-color: transparent;
+    overflow-x: hidden;
 }
 
 body {
@@ -7,6 +12,16 @@ body {
         radial-gradient(ellipse 80% 50% at 50% -10%, rgba(249, 115, 22, 0.08), transparent 50%),
         radial-gradient(ellipse 60% 50% at 100% 0%, rgba(251, 146, 60, 0.04), transparent 50%);
     background-attachment: fixed;
+    overflow-x: hidden;
+}
+
+header > div,
+main,
+footer {
+    width: min(calc(100vw - 2rem), 34rem) !important;
+    max-width: calc(100vw - 2rem) !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
 }
 
 button, a {

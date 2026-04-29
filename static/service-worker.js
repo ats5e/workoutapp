@@ -1,4 +1,4 @@
-const CACHE_NAME = "iron-log-v2";
+const CACHE_NAME = "iron-log-v4";
 const CORE_ASSETS = [
     "/",
     "/static/css/styles.css",

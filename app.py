@@ -14,9 +14,9 @@ DEFAULT_IMAGE_BASE = "https://raw.githubusercontent.com/yuhonas/free-exercise-db
 
 DEFAULT_PROFILE = {
     "name": "",
-    "training_goal": "Build strength, add muscle, and stay ruthlessly consistent.",
-    "focus_area": "Upper-body progression with a strong posterior chain.",
-    "preferred_session_minutes": 90,
+    "training_goal": "Build muscle with a focused upper-body bias.",
+    "focus_area": "45-minute upper-body progression with no squat variations.",
+    "preferred_session_minutes": 45,
 }
 
 app = Flask(__name__)
@@ -142,7 +142,7 @@ def init_db(conn):
             name TEXT NOT NULL DEFAULT '',
             training_goal TEXT NOT NULL DEFAULT '',
             focus_area TEXT NOT NULL DEFAULT '',
-            preferred_session_minutes INTEGER NOT NULL DEFAULT 90,
+            preferred_session_minutes INTEGER NOT NULL DEFAULT 45,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -203,6 +203,14 @@ def init_db(conn):
             DEFAULT_PROFILE["focus_area"],
             DEFAULT_PROFILE["preferred_session_minutes"],
         ),
+    )
+    conn.execute(
+        """
+        UPDATE profile
+        SET preferred_session_minutes = ?
+        WHERE id = 1 AND preferred_session_minutes = 90
+        """,
+        (DEFAULT_PROFILE["preferred_session_minutes"],),
     )
     conn.commit()
 
@@ -565,7 +573,7 @@ def build_home_coach_note(profile, readiness, next_workout):
     if readiness["weight_adjustment"] == "ease":
         return {
             "title": f"{name}, keep {next_workout['name']} smooth today.",
-            "body": "Take the walk seriously, hold the load steady, and treat perfect reps as the win condition.",
+            "body": "Use the first ramp-up sets to settle in, hold the load steady, and treat perfect reps as the win condition.",
         }
 
     if readiness["weight_adjustment"] == "hold":
@@ -576,7 +584,7 @@ def build_home_coach_note(profile, readiness, next_workout):
 
     return {
         "title": f"{name}, you're lined up for {next_workout['name']}.",
-        "body": "Your readiness looks solid. Let the warm-up set the tone, then go chase crisp, confident work sets.",
+        "body": "Your readiness looks solid. Start with crisp ramp-up sets, then go chase confident work sets.",
     }
 
 
@@ -709,7 +717,7 @@ def build_workout_page_model(workout_id):
     elif readiness["weight_adjustment"] == "hold":
         coach_tip = "Middle-gear day: own the reps, then decide whether to push once the first compound set lands clean."
     else:
-        coach_tip = "You look ready. Let the walk wake you up, then attack the main lift with intent."
+        coach_tip = "You look ready. Use the first ramp-up sets to lock in, then attack the main lift with intent."
 
     model = {
         "profile": profile,

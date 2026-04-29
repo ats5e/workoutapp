@@ -5,6 +5,9 @@ Iron Log is a personalized workout tracker built with Flask. It now includes:
 - a profile and daily readiness check-in
 - persistent workout history in SQLite
 - personalized load suggestions based on your own previous sessions
+- 45-minute workout rotation with an upper-body muscle-building bias
+- hypertrophy cues for target effort, tempo, muscle focus, and progression
+- top-level exercise selection with suggested loads inside each workout day
 - draft restore if you leave a workout halfway through
 - automatic session logging, achievements, and recent-history analytics
 - installable PWA basics with cached assets for better in-gym reliability
@@ -46,5 +49,5 @@ DATABASE_PATH=/tmp/ironlog.db .venv/bin/python app.py
 ## Main app areas
 
 - `/` personal dashboard with readiness, profile, rotation, and recent sessions
-- `/workout/<id>` guided workout flow with logging, timers, and draft restore
+- `/workout/<id>` guided workout flow with exercise overview, set logging, rest timers, and draft restore
 - `/api/*` JSON endpoints for profile, check-ins, sessions, workouts, and dashboard data
