@@ -21,6 +21,43 @@ DEFAULT_PROFILE = {
 
 app = Flask(__name__)
 
+CATEGORY_META = [
+    {
+        "id": "push",
+        "label": "Push",
+        "description": "Chest-led pressing and fly work.",
+    },
+    {
+        "id": "pull",
+        "label": "Pull",
+        "description": "Back width, rows, and lat-focused work.",
+    },
+    {
+        "id": "shoulders",
+        "label": "Shoulders",
+        "description": "Delts, rear delts, and shoulder stability.",
+    },
+    {
+        "id": "arms",
+        "label": "Arms",
+        "description": "Biceps and triceps accessories.",
+    },
+    {
+        "id": "posterior-chain",
+        "label": "Posterior Chain",
+        "description": "Hip hinge, hamstring, and glute work without squats.",
+    },
+    {
+        "id": "core-calves",
+        "label": "Core + Calves",
+        "description": "Core bracing and lower-leg accessories.",
+    },
+]
+
+CATEGORY_LABELS = {category["id"]: category["label"] for category in CATEGORY_META}
+CATEGORY_RANKS = {category["id"]: index for index, category in enumerate(CATEGORY_META)}
+SMART_WORKOUT_ID = "smart-session"
+
 
 def now_iso():
     return datetime.now().replace(microsecond=0).isoformat()
@@ -102,6 +139,47 @@ def format_relative_date(iso_string):
         weeks = delta_days // 7
         return f"{weeks}w ago"
     return dt.strftime("%b %d")
+
+
+def format_exercise_weight(exercise, weight=None):
+    weight = exercise.get("weight") if weight is None else weight
+    fmt = exercise.get("weight_format") or "{w} kg"
+    if fmt == "bodyweight":
+        return "bodyweight"
+    return fmt.replace("{w}", compact_number(weight or 0))
+
+
+def classify_exercise(exercise):
+    text = f"{exercise.get('id', '')} {exercise.get('name', '')} {exercise.get('muscle_focus', '')}".lower()
+
+    if any(token in text for token in ["calf", "knee raise", "hanging", "core"]):
+        category_id = "core-calves"
+        pattern = "core-calves"
+    elif any(token in text for token in ["deadlift", "hip thrust", "leg curl", "hamstring", "glute"]):
+        category_id = "posterior-chain"
+        pattern = "hinge"
+    elif any(token in text for token in ["shoulder", "lateral", "arnold", "rear delt", "face pull"]):
+        category_id = "shoulders"
+        pattern = "shoulder"
+    elif any(token in text for token in ["curl", "tricep", "triceps", "skullcrusher", "extension"]):
+        category_id = "arms"
+        pattern = "arm isolation"
+    elif any(token in text for token in ["pull-up", "pull up", "pulldown", "row", "lat"]):
+        category_id = "pull"
+        pattern = "pull"
+    elif any(token in text for token in ["bench", "chest", "fly", "dip", "press"]):
+        category_id = "push"
+        pattern = "press"
+    else:
+        category_id = "push"
+        pattern = "general"
+
+    return {
+        "category": category_id,
+        "category_label": CATEGORY_LABELS.get(category_id, "Other"),
+        "category_rank": CATEGORY_RANKS.get(category_id, 99),
+        "movement_pattern": pattern,
+    }
 
 
 def get_database_path():
@@ -669,8 +747,43 @@ def build_dashboard(program):
 
 def enrich_workout(workout):
     history = collect_workout_history()
+    return enrich_workout_with_history(workout, history)
+
+
+def enrich_exercise(exercise, history, source_workout=None):
     latest_by_exercise = history["latest_by_exercise"]
     best_by_exercise = history["best_by_exercise"]
+    latest = latest_by_exercise.get(exercise["id"], {})
+    best = best_by_exercise.get(exercise["id"], {})
+    classification = classify_exercise(exercise)
+    source = {}
+    if source_workout:
+        source = {
+            "source_workout_id": source_workout.get("id"),
+            "source_workout_name": source_workout.get("name"),
+        }
+
+    return {
+        **exercise,
+        **classification,
+        **source,
+        "display_weight_label": format_exercise_weight(exercise),
+        "last_logged_weight": latest.get("last_logged_weight"),
+        "last_logged_label": latest.get("last_logged_label"),
+        "last_completed_at": latest.get("last_completed_at"),
+        "last_completed_label": latest.get("last_completed_label"),
+        "last_completed_sets": latest.get("last_completed_sets"),
+        "last_target_sets": latest.get("last_target_sets"),
+        "last_reps": latest.get("last_reps"),
+        "last_notes": latest.get("last_notes"),
+        "personal_best_weight": best.get("weight"),
+        "personal_best_label": best.get("label"),
+        "personal_best_completed_at": best.get("completed_at"),
+        "personal_best_completed_label": best.get("completed_label"),
+    }
+
+
+def enrich_workout_with_history(workout, history):
     latest_workout = history["latest_by_workout"].get(workout["id"])
 
     enriched = {
@@ -679,26 +792,116 @@ def enrich_workout(workout):
         "latest_session": latest_workout,
     }
     for exercise in workout.get("exercises", []):
-        latest = latest_by_exercise.get(exercise["id"], {})
-        best = best_by_exercise.get(exercise["id"], {})
-        enriched["exercises"].append(
-            {
-                **exercise,
-                "last_logged_weight": latest.get("last_logged_weight"),
-                "last_logged_label": latest.get("last_logged_label"),
-                "last_completed_at": latest.get("last_completed_at"),
-                "last_completed_label": latest.get("last_completed_label"),
-                "last_completed_sets": latest.get("last_completed_sets"),
-                "last_target_sets": latest.get("last_target_sets"),
-                "last_reps": latest.get("last_reps"),
-                "last_notes": latest.get("last_notes"),
-                "personal_best_weight": best.get("weight"),
-                "personal_best_label": best.get("label"),
-                "personal_best_completed_at": best.get("completed_at"),
-                "personal_best_completed_label": best.get("completed_label"),
-            }
-        )
+        enriched["exercises"].append(enrich_exercise(exercise, history, workout))
     return enriched
+
+
+def build_exercise_library(program=None):
+    program = program or load_program()
+    history = collect_workout_history()
+    exercises_by_id = {}
+
+    for workout in program["workouts"]:
+        for exercise in workout.get("exercises", []):
+            enriched = enrich_exercise(exercise, history, workout)
+            existing = exercises_by_id.get(enriched["id"])
+            source = {
+                "id": workout["id"],
+                "name": workout["name"],
+            }
+            if existing:
+                existing.setdefault("source_workouts", []).append(source)
+                continue
+            enriched["source_workouts"] = [source]
+            exercises_by_id[enriched["id"]] = enriched
+
+    return sorted(
+        exercises_by_id.values(),
+        key=lambda exercise: (
+            safe_int(exercise.get("category_rank"), 99),
+            exercise.get("name", ""),
+        ),
+    )
+
+
+def group_exercises_by_category(exercises):
+    groups = []
+    for category in CATEGORY_META:
+        grouped = [
+            exercise
+            for exercise in exercises
+            if exercise.get("category") == category["id"]
+        ]
+        if grouped:
+            groups.append({**category, "exercises": grouped, "count": len(grouped)})
+    return groups
+
+
+def recommendation_score(after, candidate, done_ids=None):
+    done_ids = set(done_ids or [])
+    if candidate["id"] == after.get("id") or candidate["id"] in done_ids:
+        return -1
+
+    category = after.get("category")
+    preferred = {
+        "push": ["pull", "shoulders", "arms", "push"],
+        "pull": ["push", "shoulders", "arms", "pull"],
+        "shoulders": ["pull", "push", "arms", "shoulders"],
+        "arms": ["push", "pull", "shoulders", "arms"],
+        "posterior-chain": ["pull", "push", "core-calves", "shoulders"],
+        "core-calves": ["push", "pull", "shoulders", "arms"],
+    }.get(category, ["push", "pull", "shoulders", "arms"])
+
+    score = 0
+    if candidate.get("category") in preferred:
+        score += (len(preferred) - preferred.index(candidate["category"])) * 20
+    if candidate.get("movement_pattern") != after.get("movement_pattern"):
+        score += 8
+    if candidate.get("category") in {"push", "pull", "shoulders", "arms"}:
+        score += 6
+    score += max(0, 6 - safe_int(candidate.get("category_rank"), 0))
+    score += min(4, safe_int(candidate.get("sets"), 0))
+    return score
+
+
+def recommend_exercises(after_id=None, done_ids=None, limit=8):
+    library = build_exercise_library()
+    done_ids = set(done_ids or [])
+    after = next((exercise for exercise in library if exercise["id"] == after_id), None)
+
+    if after is None:
+        candidates = [
+            exercise
+            for exercise in library
+            if exercise["id"] not in done_ids
+            and exercise.get("category") in {"push", "pull", "shoulders", "arms"}
+        ]
+        candidates.sort(
+            key=lambda exercise: (
+                safe_int(exercise.get("category_rank"), 99),
+                -safe_int(exercise.get("sets"), 0),
+                exercise.get("name", ""),
+            )
+        )
+        return {"after": None, "recommendations": candidates[:limit]}
+
+    scored = []
+    for candidate in library:
+        score = recommendation_score(after, candidate, done_ids)
+        if score >= 0:
+            scored.append((score, candidate))
+
+    scored.sort(
+        key=lambda item: (
+            -item[0],
+            safe_int(item[1].get("category_rank"), 99),
+            item[1].get("name", ""),
+        )
+    )
+    return {
+        "after": after,
+        "recommendations": [candidate for _score, candidate in scored[:limit]],
+    }
 
 
 def build_workout_page_model(workout_id):
@@ -724,10 +927,107 @@ def build_workout_page_model(workout_id):
         "today_checkin": today_checkin,
         "readiness": readiness,
         "workout": enriched,
+        "exercise_library": build_exercise_library(),
+        "initial_done_exercise_ids": [],
+        "initial_current_exercise_id": None,
         "coach_tip": coach_tip,
         "latest_session": latest_session,
     }
     return model
+
+
+def build_smart_workout_page_model(start_id=None, done_id=None):
+    program = load_program()
+    profile = get_profile()
+    today_checkin = get_today_checkin()
+    readiness = build_readiness_state(today_checkin)
+    library = build_exercise_library(program)
+    exercise_by_id = {exercise["id"]: exercise for exercise in library}
+
+    start_exercise = exercise_by_id.get(start_id) if start_id else None
+    done_exercise = exercise_by_id.get(done_id) if done_id else None
+    if start_id and start_exercise is None:
+        return None
+    if done_id and done_exercise is None:
+        return None
+
+    done_ids = [done_exercise["id"]] if done_exercise else []
+    basis = start_exercise or done_exercise
+    recommendations = recommend_exercises(
+        after_id=basis["id"] if basis else None,
+        done_ids=done_ids,
+        limit=7,
+    )["recommendations"]
+
+    exercises = []
+    if done_exercise:
+        exercises.append(done_exercise)
+    if start_exercise and start_exercise["id"] not in {exercise["id"] for exercise in exercises}:
+        exercises.append(start_exercise)
+    for recommendation in recommendations:
+        if recommendation["id"] not in {exercise["id"] for exercise in exercises}:
+            exercises.append(recommendation)
+        if len(exercises) >= 6:
+            break
+
+    if not exercises:
+        exercises = recommend_exercises(limit=6)["recommendations"]
+
+    initial_current = None
+    if start_exercise:
+        initial_current = start_exercise["id"]
+    elif recommendations:
+        initial_current = recommendations[0]["id"]
+    elif exercises:
+        initial_current = exercises[0]["id"]
+
+    if done_exercise:
+        coach_tip = (
+            f"Logged {done_exercise['name']} first. The next options balance that work and keep the session moving."
+        )
+    elif start_exercise:
+        coach_tip = (
+            f"Starting with {start_exercise['name']}. Use the suggested load, then pick the best available follow-up."
+        )
+    else:
+        coach_tip = "Pick the first available movement, then let the app steer the rest of the 45-minute lift."
+
+    return {
+        "profile": profile,
+        "today_checkin": today_checkin,
+        "readiness": readiness,
+        "exercise_library": library,
+        "initial_done_exercise_ids": done_ids,
+        "initial_current_exercise_id": initial_current,
+        "coach_tip": coach_tip,
+        "latest_session": None,
+        "workout": {
+            "id": SMART_WORKOUT_ID,
+            "name": "Smart Gym Session",
+            "description": "Flexible exercise-first session",
+            "hypertrophy_focus": "Start with the equipment that is free, then balance the session with complementary upper-body volume.",
+            "session_tips": [
+                "Use your 15-minute cardio walk before opening the lifting flow.",
+                "Choose the first available movement, then alternate stress where possible: press into pull, pull into press, shoulders into back or arms.",
+                "Keep the same progression rule: when every set reaches the top of the rep range cleanly, add the listed jump next time.",
+            ],
+            "target_minutes": 45,
+            "warmup": {"label": "Warm-up already done", "minutes": 0},
+            "cooldown": {"label": "Optional cool-down", "minutes": 0},
+            "smart_mode": True,
+            "exercises": exercises,
+        },
+    }
+
+
+def build_exercise_library_page_model():
+    exercises = build_exercise_library()
+    return {
+        "categories": CATEGORY_META,
+        "groups": group_exercises_by_category(exercises),
+        "exercises": exercises,
+        "total": len(exercises),
+    }
 
 
 def current_personal_best_map():
@@ -794,7 +1094,13 @@ def build_post_session_coach_note(payload):
 
 
 def save_session(payload):
-    workout = find_workout(payload.get("workout_id"))
+    workout_id = payload.get("workout_id")
+    workout = find_workout(workout_id)
+    if workout is None and workout_id == SMART_WORKOUT_ID:
+        workout = {
+            "id": SMART_WORKOUT_ID,
+            "name": clamp_text(payload.get("workout_name"), "Smart Gym Session", 80),
+        }
     if workout is None:
         abort(404)
 
@@ -934,6 +1240,31 @@ def workout(workout_id):
     )
 
 
+@app.route("/smart")
+def smart_workout():
+    program = load_program()
+    model = build_smart_workout_page_model(
+        start_id=request.args.get("start"),
+        done_id=request.args.get("done"),
+    )
+    if model is None:
+        abort(404)
+    return render_template(
+        "workout.html",
+        model=model,
+        image_base=program["image_base"],
+    )
+
+
+@app.route("/exercises")
+def exercises():
+    return render_template(
+        "exercises.html",
+        model=build_exercise_library_page_model(),
+        image_base=load_program()["image_base"],
+    )
+
+
 @app.route("/api/dashboard")
 def api_dashboard():
     return jsonify(build_dashboard(load_program()))
@@ -994,6 +1325,29 @@ def api_workout(workout_id):
     if workout is None:
         abort(404)
     return jsonify(enrich_workout(workout))
+
+
+@app.route("/api/exercises")
+def api_exercises():
+    model = build_exercise_library_page_model()
+    return jsonify(model)
+
+
+@app.route("/api/recommendations")
+def api_recommendations():
+    done = [
+        item
+        for item in (request.args.get("done") or "").split(",")
+        if item
+    ]
+    limit = safe_int(request.args.get("limit"), 8, minimum=1, maximum=12)
+    return jsonify(
+        recommend_exercises(
+            after_id=request.args.get("after"),
+            done_ids=done,
+            limit=limit,
+        )
+    )
 
 
 @app.route("/api/sessions", methods=["POST"])

@@ -19,15 +19,46 @@ class IronLogAppTests(unittest.TestCase):
     def test_home_and_workout_pages_render(self):
         home = self.client.get("/")
         workout = self.client.get("/workout/day-1-push")
+        exercises = self.client.get("/exercises")
+        smart = self.client.get("/smart?start=seated-db-shoulder-press")
 
         self.assertEqual(home.status_code, 200)
         self.assertEqual(workout.status_code, 200)
+        self.assertEqual(exercises.status_code, 200)
+        self.assertEqual(smart.status_code, 200)
         self.assertIn(b"Daily Check-in", home.data)
         self.assertIn(b"Exercise Overview", workout.data)
+        self.assertIn(b"Smart Gym Mode", workout.data)
         self.assertIn(b"Target RIR", workout.data)
         self.assertIn(b"Suggested", workout.data)
         self.assertIn(b"Session Notes", workout.data)
+        self.assertIn(b"Exercise Library", exercises.data)
+        self.assertIn(b"Start here", exercises.data)
+        self.assertIn(b"Smart Gym Session", smart.data)
         self.assertNotIn(b"Start Walk", workout.data)
+
+    def test_exercise_library_and_recommendations(self):
+        library = self.client.get("/api/exercises").get_json()
+        recommendations = self.client.get(
+            "/api/recommendations?after=seated-db-shoulder-press&limit=6"
+        ).get_json()
+
+        self.assertGreaterEqual(library["total"], 30)
+        self.assertTrue(any(group["id"] == "push" for group in library["groups"]))
+        self.assertTrue(any(group["id"] == "pull" for group in library["groups"]))
+        shoulder_press = next(
+            exercise
+            for exercise in library["exercises"]
+            if exercise["id"] == "seated-db-shoulder-press"
+        )
+        self.assertEqual(shoulder_press["category"], "shoulders")
+        self.assertIn("kg", shoulder_press["display_weight_label"])
+        self.assertEqual(recommendations["after"]["id"], "seated-db-shoulder-press")
+        self.assertGreaterEqual(len(recommendations["recommendations"]), 4)
+        self.assertNotIn(
+            "seated-db-shoulder-press",
+            [exercise["id"] for exercise in recommendations["recommendations"]],
+        )
 
     def test_workout_program_matches_requested_rotation(self):
         dashboard = self.client.get("/api/dashboard").get_json()
@@ -132,6 +163,36 @@ class IronLogAppTests(unittest.TestCase):
         self.assertEqual(workout["exercises"][0]["last_logged_label"], "52.5 kg")
         self.assertEqual(workout["exercises"][0]["personal_best_label"], "52.5 kg")
         self.assertEqual(workout["latest_session"]["completed_sets"], 7)
+
+    def test_smart_session_can_be_saved(self):
+        save_response = self.client.post(
+            "/api/sessions",
+            json={
+                "workout_id": "smart-session",
+                "workout_name": "Smart Gym Session",
+                "week": 1,
+                "duration_seconds": 2700,
+                "exercise_logs": [
+                    {
+                        "exercise_id": "seated-db-shoulder-press",
+                        "exercise_name": "Seated Dumbbell Shoulder Press",
+                        "reps": "10",
+                        "target_sets": 3,
+                        "completed_sets": 3,
+                        "skipped_sets": 0,
+                        "working_weight": 16,
+                        "working_weight_label": "16 kg / hand",
+                        "suggested_weight": 16,
+                        "suggested_weight_label": "16 kg / hand",
+                        "notes": "",
+                    }
+                ],
+            },
+        )
+        history = self.client.get("/api/history").get_json()
+
+        self.assertEqual(save_response.status_code, 201)
+        self.assertEqual(history["sessions"][0]["workout_name"], "Smart Gym Session")
 
 
 if __name__ == "__main__":

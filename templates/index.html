@@ -2,6 +2,12 @@
 
 {% block title %}Iron Log — Personal Dashboard{% endblock %}
 
+{% block header_right %}
+<a href="{{ url_for('exercises') }}" class="text-sm text-slate-400 active:text-white inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 -mr-2">
+    Exercises
+</a>
+{% endblock %}
+
 {% block content %}
 <div x-data='homeView({{ dashboard | tojson }})' x-init="init()" class="space-y-6">
     <section class="space-y-4">
@@ -86,6 +92,16 @@
                 <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
             </a>
             {% endif %}
+        </div>
+        <div class="mt-4 grid grid-cols-2 gap-3">
+            <a href="{{ url_for('exercises') }}"
+               class="rounded-2xl border border-accent/30 bg-accent/10 px-4 py-3 text-sm font-semibold text-accent active:bg-accent/15">
+                Exercise library
+            </a>
+            <a href="{{ url_for('smart_workout') }}"
+               class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white active:bg-white/10">
+                Smart session
+            </a>
         </div>
     </section>
 
