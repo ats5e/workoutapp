@@ -9,7 +9,7 @@ Iron Log is a personalized workout tracker built with Flask. It now includes:
 - hypertrophy cues for target effort, tempo, muscle focus, and progression
 - top-level exercise selection with suggested loads inside each workout day
 - smart gym mode for starting with any available exercise and getting balanced next-exercise options
-- categorized exercise library with reps, weights, cues, and start/next actions
+- view-first categorized exercise library with reps, weights, cues, and optional start/next actions
 - draft restore if you leave a workout halfway through
 - automatic session logging, achievements, and recent-history analytics
 - installable PWA basics with cached assets for better in-gym reliability

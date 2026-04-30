@@ -244,6 +244,11 @@ function exerciseLibraryView(initialModel) {
         model: deepCopy(initialModel),
         query: "",
         activeCategory: "all",
+        selectedExerciseId: "",
+
+        init() {
+            this.selectedExerciseId = this.exercises[0]?.id || "";
+        },
 
         get categories() {
             return this.model.categories || [];
@@ -280,6 +285,24 @@ function exerciseLibraryView(initialModel) {
                     .join(" ")
                     .toLowerCase();
                 return searchable.includes(query);
+            });
+        },
+
+        get selectedExercise() {
+            return (
+                this.exercises.find((exercise) => exercise.id === this.selectedExerciseId) ||
+                this.filteredExercises[0] ||
+                null
+            );
+        },
+
+        selectExercise(exercise) {
+            this.selectedExerciseId = exercise.id;
+            window.requestAnimationFrame(() => {
+                document.getElementById("exercise-detail")?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "start",
+                });
             });
         },
 
@@ -697,6 +720,10 @@ function workoutSession(initialModel) {
             return this.exerciseLibrary.find((exercise) => exercise.id === exerciseId) || null;
         },
 
+        get smartSelectedExercise() {
+            return this.findLibraryExercise(this.librarySelectedId) || this.currentExercise;
+        },
+
         ensureExerciseInWorkout(exercise) {
             const existingIndex = this.workout.exercises.findIndex(
                 (item) => item.id === exercise.id
@@ -798,6 +825,14 @@ function workoutSession(initialModel) {
 
         get smartRecommendations() {
             return this.buildSmartRecommendations(this.currentExercise, 6);
+        },
+
+        get primarySmartRecommendation() {
+            return this.smartRecommendations[0] || null;
+        },
+
+        get alternateSmartRecommendations() {
+            return this.smartRecommendations.slice(1, 5);
         },
 
         exerciseOverviewClass(index) {

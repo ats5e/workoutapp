@@ -28,13 +28,15 @@ class IronLogAppTests(unittest.TestCase):
         self.assertEqual(smart.status_code, 200)
         self.assertIn(b"Daily Check-in", home.data)
         self.assertIn(b"Exercise Overview", workout.data)
-        self.assertIn(b"Smart Gym Mode", workout.data)
         self.assertIn(b"Target RIR", workout.data)
         self.assertIn(b"Suggested", workout.data)
         self.assertIn(b"Session Notes", workout.data)
         self.assertIn(b"Exercise Library", exercises.data)
-        self.assertIn(b"Start here", exercises.data)
+        self.assertIn(b"Selected Exercise", exercises.data)
+        self.assertIn(b"View", exercises.data)
         self.assertIn(b"Smart Gym Session", smart.data)
+        self.assertIn(b"Smart Gym Coach", smart.data)
+        self.assertIn(b"Train selected", smart.data)
         self.assertNotIn(b"Start Walk", workout.data)
 
     def test_exercise_library_and_recommendations(self):

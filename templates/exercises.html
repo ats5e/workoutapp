@@ -10,7 +10,7 @@
 {% endblock %}
 
 {% block content %}
-<div x-data='exerciseLibraryView({{ model | tojson }})' class="space-y-5">
+<div x-data='exerciseLibraryView({{ model | tojson }})' x-init="init()" class="space-y-5">
     <section class="space-y-3">
         <div>
             <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-accent/80">Exercise Library</p>
@@ -41,6 +41,59 @@
             </div>
         </div>
     </section>
+
+    <template x-if="selectedExercise">
+        <section id="exercise-detail" class="rounded-3xl border border-accent/30 bg-accent/10 p-5">
+            <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                    <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-accent/80">Selected Exercise</p>
+                    <h2 class="mt-1 font-display text-2xl font-bold leading-tight text-white" x-text="selectedExercise.name"></h2>
+                    <p class="mt-1 text-sm text-slate-300" x-text="selectedExercise.muscle_focus"></p>
+                </div>
+                <span class="flex-shrink-0 rounded-full bg-slate-950/50 px-2.5 py-1 text-[11px] font-semibold text-accent" x-text="selectedExercise.category_label"></span>
+            </div>
+
+            <div class="mt-4 grid grid-cols-3 gap-2 text-xs text-slate-300">
+                <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
+                    Sets
+                    <div class="mt-1 font-semibold text-white" x-text="`${selectedExercise.sets} x ${selectedExercise.reps}`"></div>
+                </div>
+                <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
+                    Load
+                    <div class="mt-1 font-semibold text-white" x-text="selectedExercise.display_weight_label"></div>
+                </div>
+                <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
+                    RIR
+                    <div class="mt-1 font-semibold text-white" x-text="selectedExercise.target_rir"></div>
+                </div>
+            </div>
+
+            <div class="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-300">
+                <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
+                    Tempo
+                    <div class="mt-1 font-semibold text-white" x-text="selectedExercise.tempo"></div>
+                </div>
+                <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
+                    Source
+                    <div class="mt-1 font-semibold text-white" x-text="selectedExercise.source_workout_name"></div>
+                </div>
+            </div>
+
+            <p class="mt-3 rounded-2xl border border-white/10 bg-slate-950/45 px-3 py-2 text-sm leading-relaxed text-slate-200" x-text="selectedExercise.hypertrophy_tip"></p>
+            <p class="mt-2 text-xs leading-relaxed text-slate-400" x-text="selectedExercise.progression_rule"></p>
+
+            <div class="mt-4 grid grid-cols-2 gap-3">
+                <a :href="startUrl(selectedExercise)"
+                   class="rounded-2xl bg-accent px-4 py-3 text-center text-sm font-bold text-slate-950 active:bg-accent-glow">
+                    Start workout
+                </a>
+                <a :href="doneUrl(selectedExercise)"
+                   class="rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-center text-sm font-semibold text-white active:bg-white/10">
+                    Already done
+                </a>
+            </div>
+        </section>
+    </template>
 
     <section class="space-y-3">
         <template x-for="exercise in filteredExercises" :key="exercise.id">
@@ -82,14 +135,19 @@
 
                 <p class="mt-3 rounded-2xl border border-accent/20 bg-accent/10 px-3 py-2 text-sm leading-relaxed text-accent" x-text="exercise.hypertrophy_tip"></p>
 
-                <div class="mt-4 grid grid-cols-2 gap-3">
+                <div class="mt-4 grid grid-cols-3 gap-2">
+                    <button type="button"
+                            @click="selectExercise(exercise)"
+                            class="rounded-2xl bg-white px-3 py-3 text-center text-sm font-bold text-slate-950 active:bg-slate-200">
+                        View
+                    </button>
                     <a :href="startUrl(exercise)"
-                       class="rounded-2xl bg-accent px-4 py-3 text-center text-sm font-bold text-slate-950 active:bg-accent-glow">
-                        Start here
+                       class="rounded-2xl bg-accent px-3 py-3 text-center text-sm font-bold text-slate-950 active:bg-accent-glow">
+                        Start
                     </a>
                     <a :href="doneUrl(exercise)"
-                       class="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-center text-sm font-semibold text-white active:bg-white/10">
-                        Done, next?
+                       class="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-center text-sm font-semibold text-white active:bg-white/10">
+                        Done
                     </a>
                 </div>
             </article>
