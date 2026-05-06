@@ -1,164 +1,159 @@
 {% extends "base.html" %}
 
-{% block title %}Exercise Library — Iron Log{% endblock %}
+{% block title %}Exercise Database — Iron Log{% endblock %}
 
 {% block header_right %}
-<a href="{{ url_for('index') }}" class="text-sm text-slate-400 active:text-white inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 -mr-2">
-    <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+<a href="{{ url_for('index') }}" class="text-[10px] font-mono tracking-widest uppercase text-slate-400 hover:text-accent transition-colors rounded-md border border-white/5 bg-white/5 hover:bg-accent/10 inline-flex items-center gap-1.5 px-3 py-1.5 -mr-2">
     Dashboard
 </a>
 {% endblock %}
 
 {% block content %}
-<div x-data='exerciseLibraryView({{ model | tojson }})' x-init="init()" class="space-y-5">
-    <section class="space-y-3">
-        <div>
-            <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-accent/80">Exercise Library</p>
-            <h1 class="mt-1.5 font-display text-3xl font-bold tracking-tight text-white">Choose the movement first.</h1>
-            <p class="mt-2 text-sm text-slate-400">{{ model.total }} programmed exercises with reps, suggested loads, cues, and smart follow-ups.</p>
-        </div>
+<div x-data='exerciseLibraryView({{ model | tojson }})' x-init="init()" class="space-y-6">
+    <!-- Header -->
+    <div class="border-b border-white/10 pb-4">
+        <p class="text-[10px] font-bold uppercase tracking-[0.3em] font-mono text-accent mb-1 flex items-center gap-2">
+            <span class="w-1.5 h-1.5 bg-accent rounded-sm animate-pulse shadow-neon"></span>
+            Intelligence Center
+        </p>
+        <h1 class="font-display text-3xl font-bold tracking-tight text-white">Exercise Database</h1>
+    </div>
 
-        <div class="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
-            <input x-model="query"
-                   type="search"
-                   class="w-full rounded-2xl border border-white/10 bg-slate-950/60 px-3 py-3 text-sm text-white placeholder:text-slate-500"
-                   placeholder="Search exercise, muscle, or workout">
-            <div class="mt-3 flex gap-2 overflow-x-auto pb-1">
-                <button type="button"
-                        @click="activeCategory = 'all'"
-                        class="flex-shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold"
-                        :class="categoryButtonClass('all')">
-                    All · {{ model.total }}
+    <!-- Search and Filter -->
+    <div class="space-y-4">
+        <div class="relative">
+            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            </div>
+            <input type="text" x-model="query" 
+                   class="block w-full pl-9 pr-3 py-3 border border-white/10 rounded-sm bg-surface-200/50 text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent text-sm font-mono backdrop-blur-sm" 
+                   placeholder="SEARCH DATABASE...">
+        </div>
+        
+        <!-- Category Filter Chips -->
+        <div class="flex overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0 hide-scrollbar gap-2">
+            <button @click="activeCategory = 'all'"
+                    class="flex-shrink-0 inline-flex items-center px-3 py-1.5 rounded-[3px] text-[10px] font-mono font-bold tracking-widest uppercase transition-colors"
+                    :class="activeCategory === 'all' ? 'bg-accent border border-accent text-surface-300 shadow-neon' : 'bg-surface-200 border border-white/10 text-slate-400 hover:border-accent/50 hover:text-white'">
+                All Data
+            </button>
+            <template x-for="category in categories" :key="category.id">
+                <button @click="activeCategory = category.id"
+                        class="flex-shrink-0 inline-flex items-center px-3 py-1.5 rounded-[3px] text-[10px] font-mono font-bold tracking-widest uppercase transition-colors"
+                        :class="activeCategory === category.id ? 'bg-accent/20 border border-accent text-accent shadow-[0_0_10px_rgba(14,165,233,0.3)]' : 'bg-surface-200 border border-white/10 text-slate-400 hover:border-accent/50 hover:text-white'"
+                        x-text="category.label">
                 </button>
-                <template x-for="category in categories" :key="category.id">
-                    <button type="button"
-                            @click="activeCategory = category.id"
-                            class="flex-shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold"
-                            :class="categoryButtonClass(category.id)">
-                        <span x-text="`${category.label} · ${categoryCount(category.id)}`"></span>
-                    </button>
+            </template>
+        </div>
+    </div>
+
+    <!-- Library List -->
+    <div class="space-y-3 lg:w-1/2" x-show="!selectedExerciseId || window.innerWidth >= 1024">
+        <template x-for="exercise in filteredExercises" :key="exercise.id">
+            <button @click="selectExercise(exercise)" 
+                    class="w-full text-left glass-panel rounded-xl border border-white/5 p-4 hover:border-accent/40 hover:bg-surface-200/80 transition-colors group relative overflow-hidden flex items-center justify-between gap-4">
+                <div class="absolute top-0 left-0 w-1 h-full bg-accent/0 group-hover:bg-accent/50 transition-colors"></div>
+                <div>
+                    <h3 class="font-bold text-white group-hover:text-accent transition-colors font-display text-lg" x-text="exercise.name"></h3>
+                    <p class="mt-1 text-[10px] uppercase font-mono tracking-wider text-slate-400">
+                        <span class="rounded bg-white/5 px-1.5 py-0.5 border border-white/10" x-text="exercise.category_label"></span>
+                        <template x-if="exercise.personal_best_label">
+                            <span class="ml-2 text-amber-500/80 font-bold">PB: <span x-text="exercise.personal_best_label"></span></span>
+                        </template>
+                    </p>
+                </div>
+                <div class="flex-shrink-0 text-slate-600 group-hover:text-accent transition-colors">
+                    <svg viewBox="0 0 24 24" fill="none" class="h-5 w-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 5l7 7-7 7"/></svg>
+                </div>
+            </button>
+        </template>
+        
+        <!-- Empty State -->
+        <div x-show="filteredExercises.length === 0" class="text-center py-10 glass-panel rounded-xl border border-white/5 border-dashed">
+            <svg viewBox="0 0 24 24" fill="none" class="mx-auto h-10 w-10 text-slate-600 opacity-50" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            <p class="mt-4 text-xs font-mono tracking-widest text-slate-400 uppercase">No matching records found</p>
+        </div>
+    </div>
+
+    <!-- Exercise Detail View -->
+    <template x-if="selectedExerciseId">
+        <div class="glass-panel rounded-xl border border-accent/30 overflow-hidden relative shadow-[0_0_20px_rgba(14,165,233,0.1)] lg:fixed lg:top-24 lg:right-8 lg:w-[calc(50%-3rem)]">
+            <!-- Tech header overlay -->
+            <div class="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-accent/0 via-accent to-accent/0 z-30"></div>
+            
+            <!-- Close Button -->
+            <button @click="selectedExerciseId = ''" class="absolute top-4 right-4 z-30 flex items-center justify-center w-8 h-8 rounded-[3px] bg-surface-300/80 border border-white/10 text-slate-400 hover:text-white hover:border-white/30 backdrop-blur transition-all lg:hidden">
+                <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+
+            <!-- Imagery Area -->
+            <div class="relative aspect-video overflow-hidden bg-surface-300 border-b border-white/10 group">
+                <div class="absolute inset-0 pointer-events-none z-10 bg-[linear-gradient(transparent_50%,rgba(0,0,0,0.25)_50%)] bg-[length:100%_4px]"></div>
+                
+                <template x-if="selectedExercise.exercise_slug && !imageFailed">
+                    <div class="absolute inset-0 z-0">
+                        <!-- Frame A: Start Position -->
+                        <div class="exercise-frame exercise-frame-a absolute inset-0 h-full w-full">
+                            <img :src="`{{ image_base }}/${selectedExercise.exercise_slug}/0.jpg`"
+                                 class="h-full w-full object-cover brightness-90 saturate-[0.8]"
+                                 loading="eager" decoding="async" @error="imageFailed = true">
+                            <div class="absolute bottom-4 right-4 rounded-sm bg-surface-300/80 border border-white/20 px-2.5 py-1 text-[10px] font-mono tracking-widest text-white uppercase backdrop-blur-md shadow-lg">Start Position</div>
+                        </div>
+                        <!-- Frame B: Finish Position -->
+                        <div class="exercise-frame exercise-frame-b absolute inset-0 h-full w-full">
+                            <img :src="`{{ image_base }}/${selectedExercise.exercise_slug}/1.jpg`"
+                                 class="h-full w-full object-cover brightness-90 saturate-[0.8]"
+                                 loading="eager" decoding="async" @error="imageFailed = true">
+                            <div class="absolute bottom-4 right-4 rounded-sm bg-accent/90 border border-accent px-2.5 py-1 text-[10px] font-mono tracking-widest text-surface-300 font-bold uppercase backdrop-blur-md shadow-neon">Finish Position</div>
+                        </div>
+                    </div>
                 </template>
+                <template x-if="!selectedExercise.exercise_slug || imageFailed">
+                    <div class="flex h-full w-full flex-col items-center justify-center gap-2 text-slate-600 bg-surface-200">
+                        <svg viewBox="0 0 24 24" fill="none" class="h-10 w-10 opacity-50" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        <p class="text-[10px] font-mono tracking-widest uppercase">Visual data offline</p>
+                    </div>
+                </template>
+                
+                <div class="absolute left-4 bottom-4 z-20">
+                    <span class="inline-flex rounded-[3px] border border-accent/50 bg-surface-300/80 px-2 py-0.5 text-[10px] font-bold font-mono text-accent backdrop-blur shadow-neon uppercase tracking-widest" x-text="selectedExercise.category_label"></span>
+                </div>
+            </div>
+
+            <!-- Content -->
+            <div class="p-5">
+                <h2 class="font-display text-2xl font-bold text-white tracking-wide" x-text="selectedExercise.name"></h2>
+                
+                <template x-if="selectedExercise.personal_best_label">
+                    <div class="mt-4 rounded-sm border border-amber-500/20 bg-amber-500/5 p-3 flex items-start gap-3">
+                        <div class="mt-0.5 text-amber-500"><svg viewBox="0 0 24 24" fill="none" class="h-4 w-4" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg></div>
+                        <div>
+                            <p class="text-[10px] font-mono font-bold uppercase tracking-widest text-amber-500/80">Historical Max</p>
+                            <p class="font-display font-bold text-amber-500" x-text="selectedExercise.personal_best_label"></p>
+                        </div>
+                    </div>
+                </template>
+
+                <div class="mt-6 space-y-4">
+                    <div>
+                        <h3 class="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-slate-500 mb-2">// INSTRUCTIONS</h3>
+                        <p class="text-sm text-slate-300 leading-relaxed border-l-2 border-white/10 pl-3 py-1" x-text="selectedExercise.instructions"></p>
+                    </div>
+                    
+                    <template x-if="selectedExercise.coach_cue">
+                        <div class="rounded-sm border border-accent/20 bg-accent/5 p-4 relative overflow-hidden">
+                            <div class="absolute left-0 top-0 w-1 h-full bg-accent shadow-neon"></div>
+                            <h3 class="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-accent mb-1 flex items-center gap-2">
+                                <span class="w-1.5 h-1.5 bg-accent rounded-sm"></span>
+                                Coach Overlay
+                            </h3>
+                            <p class="text-sm font-mono text-slate-300 tracking-tight" x-text="selectedExercise.coach_cue"></p>
+                        </div>
+                    </template>
+                </div>
             </div>
         </div>
-    </section>
-
-    <template x-if="selectedExercise">
-        <section id="exercise-detail" class="rounded-3xl border border-accent/30 bg-accent/10 p-5">
-            <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0">
-                    <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-accent/80">Selected Exercise</p>
-                    <h2 class="mt-1 font-display text-2xl font-bold leading-tight text-white" x-text="selectedExercise.name"></h2>
-                    <p class="mt-1 text-sm text-slate-300" x-text="selectedExercise.muscle_focus"></p>
-                </div>
-                <span class="flex-shrink-0 rounded-full bg-slate-950/50 px-2.5 py-1 text-[11px] font-semibold text-accent" x-text="selectedExercise.category_label"></span>
-            </div>
-
-            <div class="mt-4 grid grid-cols-3 gap-2 text-xs text-slate-300">
-                <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
-                    Sets
-                    <div class="mt-1 font-semibold text-white" x-text="`${selectedExercise.sets} x ${selectedExercise.reps}`"></div>
-                </div>
-                <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
-                    Load
-                    <div class="mt-1 font-semibold text-white" x-text="selectedExercise.display_weight_label"></div>
-                </div>
-                <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
-                    RIR
-                    <div class="mt-1 font-semibold text-white" x-text="selectedExercise.target_rir"></div>
-                </div>
-            </div>
-
-            <div class="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-300">
-                <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
-                    Tempo
-                    <div class="mt-1 font-semibold text-white" x-text="selectedExercise.tempo"></div>
-                </div>
-                <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
-                    Source
-                    <div class="mt-1 font-semibold text-white" x-text="selectedExercise.source_workout_name"></div>
-                </div>
-            </div>
-
-            <p class="mt-3 rounded-2xl border border-white/10 bg-slate-950/45 px-3 py-2 text-sm leading-relaxed text-slate-200" x-text="selectedExercise.hypertrophy_tip"></p>
-            <p class="mt-2 text-xs leading-relaxed text-slate-400" x-text="selectedExercise.progression_rule"></p>
-
-            <div class="mt-4 grid grid-cols-2 gap-3">
-                <a :href="startUrl(selectedExercise)"
-                   class="rounded-2xl bg-accent px-4 py-3 text-center text-sm font-bold text-slate-950 active:bg-accent-glow">
-                    Start workout
-                </a>
-                <a :href="doneUrl(selectedExercise)"
-                   class="rounded-2xl border border-white/10 bg-slate-950/50 px-4 py-3 text-center text-sm font-semibold text-white active:bg-white/10">
-                    Already done
-                </a>
-            </div>
-        </section>
     </template>
-
-    <section class="space-y-3">
-        <template x-for="exercise in filteredExercises" :key="exercise.id">
-            <article class="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
-                <div class="flex items-start justify-between gap-3">
-                    <div class="min-w-0">
-                        <div class="inline-flex rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-300" x-text="exercise.category_label"></div>
-                        <h2 class="mt-3 font-display text-xl font-bold leading-tight text-white" x-text="exercise.name"></h2>
-                        <p class="mt-1 text-sm text-slate-400" x-text="exercise.muscle_focus"></p>
-                    </div>
-                    <span class="flex-shrink-0 rounded-full bg-accent/10 px-2.5 py-1 text-[11px] font-semibold text-accent" x-text="exercise.source_workout_name"></span>
-                </div>
-
-                <div class="mt-4 grid grid-cols-3 gap-2 text-xs text-slate-300">
-                    <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
-                        Sets
-                        <div class="mt-1 font-semibold text-white" x-text="`${exercise.sets} x ${exercise.reps}`"></div>
-                    </div>
-                    <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
-                        Load
-                        <div class="mt-1 font-semibold text-white" x-text="exercise.display_weight_label"></div>
-                    </div>
-                    <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
-                        RIR
-                        <div class="mt-1 font-semibold text-white" x-text="exercise.target_rir"></div>
-                    </div>
-                </div>
-
-                <div class="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-300">
-                    <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
-                        Tempo
-                        <div class="mt-1 font-semibold text-white" x-text="exercise.tempo"></div>
-                    </div>
-                    <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
-                        Progression
-                        <div class="mt-1 font-semibold text-white" x-text="`${exercise.progression_kg || 0} kg jump`"></div>
-                    </div>
-                </div>
-
-                <p class="mt-3 rounded-2xl border border-accent/20 bg-accent/10 px-3 py-2 text-sm leading-relaxed text-accent" x-text="exercise.hypertrophy_tip"></p>
-
-                <div class="mt-4 grid grid-cols-3 gap-2">
-                    <button type="button"
-                            @click="selectExercise(exercise)"
-                            class="rounded-2xl bg-white px-3 py-3 text-center text-sm font-bold text-slate-950 active:bg-slate-200">
-                        View
-                    </button>
-                    <a :href="startUrl(exercise)"
-                       class="rounded-2xl bg-accent px-3 py-3 text-center text-sm font-bold text-slate-950 active:bg-accent-glow">
-                        Start
-                    </a>
-                    <a :href="doneUrl(exercise)"
-                       class="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-center text-sm font-semibold text-white active:bg-white/10">
-                        Done
-                    </a>
-                </div>
-            </article>
-        </template>
-
-        <template x-if="filteredExercises.length === 0">
-            <div class="rounded-3xl border border-dashed border-white/10 p-8 text-center text-sm text-slate-400">
-                No exercises match that filter.
-            </div>
-        </template>
-    </section>
 </div>
 
 <script src="{{ url_for('static', filename='js/workout.js') }}"></script>

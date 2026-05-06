@@ -245,9 +245,11 @@ function exerciseLibraryView(initialModel) {
         query: "",
         activeCategory: "all",
         selectedExerciseId: "",
+        imageFailed: false,
 
         init() {
             this.selectedExerciseId = this.exercises[0]?.id || "";
+            this.$watch('selectedExerciseId', () => { this.imageFailed = false; });
         },
 
         get categories() {

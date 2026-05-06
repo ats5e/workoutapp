@@ -84,26 +84,24 @@ main {
     box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.16);
 }
 
-/* Exercise diagram — crossfade between two frames to show motion */
+/* Exercise diagram — sharp snapping between two frames for clarity */
 .exercise-frame {
     will-change: opacity;
     backface-visibility: hidden;
 }
 .exercise-frame-a {
-    animation: exerciseFrameA 1.8s ease-in-out infinite;
+    animation: exerciseFrameStepA 3s infinite;
 }
 .exercise-frame-b {
-    animation: exerciseFrameB 1.8s ease-in-out infinite;
+    animation: exerciseFrameStepB 3s infinite;
 }
-@keyframes exerciseFrameA {
-    0%, 30%  { opacity: 1; }
-    50%, 80% { opacity: 0; }
-    100%     { opacity: 1; }
+@keyframes exerciseFrameStepA {
+    0%, 49.99% { opacity: 1; }
+    50%, 100% { opacity: 0; }
 }
-@keyframes exerciseFrameB {
-    0%, 30%  { opacity: 0; }
-    50%, 80% { opacity: 1; }
-    100%     { opacity: 0; }
+@keyframes exerciseFrameStepB {
+    0%, 49.99% { opacity: 0; }
+    50%, 100% { opacity: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {

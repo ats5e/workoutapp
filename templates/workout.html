@@ -4,475 +4,398 @@
 
 {% block header_right %}
 <div class="flex items-center gap-1">
-    <a href="{{ url_for('exercises') }}" class="text-sm text-slate-400 active:text-white rounded-lg px-2 py-1.5">Exercises</a>
-    <a href="{{ url_for('index') }}" class="text-sm text-slate-400 active:text-white inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 -mr-2">
-        <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-        Dashboard
+    <a href="{{ url_for('exercises') }}" class="text-[10px] font-mono tracking-widest uppercase text-slate-400 hover:text-accent transition-colors rounded-md border border-white/5 bg-white/5 hover:bg-accent/10 px-3 py-1.5">Library</a>
+    <a href="{{ url_for('index') }}" class="text-[10px] font-mono tracking-widest uppercase text-slate-400 hover:text-accent transition-colors rounded-md border border-white/5 bg-white/5 hover:bg-accent/10 inline-flex items-center gap-1.5 px-3 py-1.5 -mr-2">
+        <svg viewBox="0 0 24 24" fill="none" class="h-3 w-3" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        Abort
     </a>
 </div>
 {% endblock %}
 
 {% block content %}
 <div x-data='workoutSession({{ model | tojson }})' x-init="init()" class="relative pb-8" data-image-base="{{ image_base }}">
+    <!-- Header Info -->
     <div class="space-y-4">
-        <div class="flex items-center justify-between gap-3">
-            <div class="inline-flex items-center gap-2 rounded-full border border-accent/30 bg-accent/10 px-3 py-1.5">
-                <span class="h-1.5 w-1.5 rounded-full bg-accent animate-pulse"></span>
-                <span class="text-xs font-semibold tracking-wide text-accent">WEEK <span x-text="week"></span></span>
+        <div class="flex items-center justify-between gap-3 border-b border-white/10 pb-3">
+            <div class="inline-flex items-center gap-2 rounded-[3px] border border-accent/30 bg-accent/10 px-2.5 py-1">
+                <span class="h-1.5 w-1.5 bg-accent shadow-neon animate-pulse"></span>
+                <span class="text-[10px] font-bold tracking-widest text-accent font-mono uppercase">Cycle <span x-text="week"></span></span>
             </div>
-            <div class="flex items-center gap-2 text-[11px] text-slate-400">
-                <span class="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 font-semibold text-slate-200">{{ model.workout.target_minutes }} MIN</span>
-                <span :class="stage === 'strength' ? 'text-white font-semibold' : 'text-slate-500'">LIFT</span>
+            <div class="flex items-center gap-2 text-[10px] font-mono tracking-widest text-slate-400 uppercase">
+                <span class="rounded-[3px] border border-white/10 bg-white/5 px-2 py-0.5 text-slate-300 shadow-sm">{{ model.workout.target_minutes }} MIN</span>
+                <span :class="stage === 'strength' ? 'text-accent shadow-neon-text' : 'text-slate-500'">LIFT</span>
             </div>
-            <span class="font-mono tabular-nums text-[11px] text-slate-400" x-text="elapsedLabel"></span>
+            <span class="font-mono font-bold tracking-widest text-[11px] text-accent/80" x-text="elapsedLabel"></span>
         </div>
 
-        <div :class="readinessSurfaceClass()" class="rounded-3xl border p-5">
-            <div class="flex items-start justify-between gap-4">
+        <div class="glass-panel rounded-xl border p-5 relative overflow-hidden" :class="readiness.score >= 68 ? 'border-accent/40 shadow-neon' : 'border-amber-500/40'">
+            <div class="absolute -right-10 -bottom-10 w-40 h-40 rounded-full blur-2xl" :class="readiness.score >= 68 ? 'bg-accent/10' : 'bg-amber-500/10'"></div>
+            <div class="flex items-start justify-between gap-4 relative z-10">
                 <div class="min-w-0">
-                    <div class="inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]" :class="pillClass(readiness.tone)">
-                        <span>Readiness</span>
-                        <span x-text="readiness.label"></span>
+                    <div class="inline-flex items-center gap-2 rounded-[3px] px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest font-mono mb-2" :class="pillClass(readiness.tone)">
+                        <span class="opacity-70">// STATUS</span>
+                        <span class="border border-current px-1.5 rounded-sm" x-text="readiness.label"></span>
                     </div>
-                    <h1 class="mt-3 font-display text-3xl font-bold text-white">{{ model.workout.name }}</h1>
-                    <p class="mt-2 text-sm" :class="readinessTextClass()" x-text="model.coach_tip"></p>
+                    <h1 class="font-display text-3xl font-bold text-white tracking-wide">{{ model.workout.name }}</h1>
+                    <p class="mt-2 text-sm text-slate-300 border-l-2 pl-3" :class="readiness.score >= 68 ? 'border-accent/50' : 'border-amber-500/50'" x-text="model.coach_tip"></p>
                     {% if model.latest_session %}
-                    <p class="mt-3 text-xs text-slate-500">
-                        Last logged {{ model.latest_session.completed_at_label }} · {{ model.latest_session.duration_label }} · {{ model.latest_session.volume_label }}
+                    <p class="mt-3 text-[10px] uppercase font-mono tracking-wider text-slate-500 flex items-center gap-2">
+                        <span>Last sync {{ model.latest_session.completed_at_label }}</span>
+                        <span class="w-1 h-1 bg-slate-600 rounded-full"></span>
+                        <span>{{ model.latest_session.volume_label }}</span>
                     </p>
                     {% endif %}
-                </div>
-                <div class="text-right">
-                    <div class="text-[10px] uppercase tracking-[0.22em] text-slate-500">Score</div>
-                    <div class="mt-1 font-display text-4xl font-bold text-white" x-text="readiness.score ?? '—'"></div>
                 </div>
             </div>
         </div>
 
         <template x-if="restoredDraft">
-            <div class="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
-                Resumed your saved draft so you can pick up where you left off.
+            <div class="rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs font-mono uppercase tracking-widest text-amber-200 flex items-center gap-2">
+                <svg viewBox="0 0 24 24" fill="none" class="w-4 h-4 text-amber-500" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                Restored Active Session Data
             </div>
         </template>
 
         <template x-if="stage === 'strength'">
-            <div>
-                <div class="mb-3 flex items-center justify-between gap-3 text-[11px] text-slate-400">
-                    <span class="min-w-0 font-semibold tracking-wide">
-                        <span x-text="processedSets"></span> / <span x-text="totalSets"></span> sets moved through
+            <div class="pt-2">
+                <div class="mb-2 flex items-center justify-between gap-3 text-[10px] font-mono tracking-widest uppercase text-slate-400">
+                    <span class="min-w-0">
+                        <span class="text-accent" x-text="processedSets"></span> / <span x-text="totalSets"></span> SETS
                     </span>
                     <span class="flex-shrink-0 text-right">
-                        <span x-text="completedSets"></span> complete · <span x-text="skippedSets"></span> skipped
+                        <span class="text-white" x-text="completedSets"></span> DONE · <span class="text-slate-500" x-text="skippedSets"></span> SKIP
                     </span>
                 </div>
-                <div class="h-1.5 w-full overflow-hidden rounded-full bg-white/5">
-                    <div class="h-full bg-gradient-to-r from-accent to-amber-400 transition-all duration-500 ease-out"
+                <div class="h-1 w-full overflow-hidden rounded-full bg-surface-100 border border-white/5">
+                    <div class="h-full bg-accent shadow-[0_0_10px_#0ea5e9] transition-all duration-500 ease-out"
                          :style="`width: ${progressPct}%`"></div>
                 </div>
             </div>
         </template>
     </div>
 
+    <!-- Main Workout Logic -->
     <template x-if="stage === 'strength'">
-        <div class="mt-4 space-y-4">
+        <div class="mt-6 space-y-5">
+            <!-- Smart Gym Coach -->
             <template x-if="workout.smart_mode && exerciseLibrary.length">
-                <div class="rounded-3xl border border-accent/25 bg-gradient-to-br from-accent/12 via-white/[0.03] to-slate-950/30 p-4">
-                    <div class="flex items-start justify-between gap-3">
+                <div class="glass-panel rounded-xl border border-accent/40 p-4 relative overflow-hidden shadow-neon">
+                    <div class="absolute top-0 right-0 w-32 h-32 bg-accent/10 rounded-full blur-2xl"></div>
+                    <div class="relative z-10 flex items-start justify-between gap-3 border-b border-accent/20 pb-3 mb-4">
                         <div class="min-w-0">
-                            <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-accent/80">Smart Gym Coach</p>
+                            <p class="text-[10px] font-bold uppercase tracking-[0.2em] text-accent font-mono flex items-center gap-2">
+                                <span class="w-1.5 h-1.5 bg-accent animate-pulse"></span>
+                                Smart Algorithm
+                            </p>
                             <h2 class="mt-1 font-display text-xl font-bold leading-tight text-white" x-text="currentExercise.name"></h2>
-                            <p class="mt-1 text-xs text-slate-300">
-                                <span x-text="`${currentExercise.sets} x ${currentExercise.reps}`"></span>
-                                <span> · </span>
+                            <p class="mt-1 text-xs font-mono tracking-wider text-slate-300">
+                                <span class="text-accent" x-text="`${currentExercise.sets} x ${currentExercise.reps}`"></span>
+                                <span> // </span>
                                 <span x-text="currentWeightLabel"></span>
                             </p>
                         </div>
-                        <span class="flex-shrink-0 rounded-full bg-slate-950/50 px-2.5 py-1 text-[11px] font-semibold text-accent" x-text="currentExercise.category_label"></span>
+                        <span class="flex-shrink-0 rounded-[3px] border border-accent/30 bg-accent/10 px-2 py-0.5 text-[9px] font-mono tracking-widest text-accent uppercase" x-text="currentExercise.category_label"></span>
                     </div>
 
-                    <div class="mt-4 rounded-2xl border border-white/10 bg-slate-950/50 p-3">
-                        <label class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Equipment available</label>
+                    <div class="rounded-lg border border-white/10 bg-surface-200/80 p-4 relative z-10">
+                        <label class="text-[9px] font-bold uppercase tracking-[0.2em] text-slate-400 font-mono">Available Equipment Scanner</label>
                         <select x-model="librarySelectedId"
-                                class="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/80 px-3 py-3 text-sm text-white">
+                                class="mt-2 w-full rounded-sm border border-white/10 bg-surface-300 px-3 py-2.5 text-xs text-white font-mono focus:border-accent focus:ring-1 focus:ring-accent outline-none appearance-none">
                             <template x-for="exercise in exerciseLibrary" :key="exercise.id">
-                                <option :value="exercise.id" x-text="`${exercise.category_label} · ${exercise.name}`"></option>
+                                <option :value="exercise.id" x-text="`${exercise.category_label} // ${exercise.name}`"></option>
                             </template>
                         </select>
-                        <div class="mt-3 rounded-xl bg-white/[0.04] p-3">
-                            <p class="text-sm font-semibold text-white" x-text="smartSelectedExercise.name"></p>
-                            <p class="mt-1 text-xs text-slate-400">
+                        <div class="mt-3 rounded-sm border border-white/5 bg-white/5 p-3">
+                            <p class="text-xs font-bold text-white font-mono uppercase tracking-wide" x-text="smartSelectedExercise.name"></p>
+                            <p class="mt-1 text-[10px] font-mono tracking-wider text-accent">
                                 <span x-text="`${smartSelectedExercise.sets} x ${smartSelectedExercise.reps}`"></span>
                                 <span> · </span>
-                                <span x-text="`Suggested ${libraryWeightLabel(smartSelectedExercise)}`"></span>
+                                <span x-text="`Target: ${libraryWeightLabel(smartSelectedExercise)}`"></span>
                             </p>
                         </div>
                         <div class="mt-3 grid grid-cols-2 gap-2">
                             <button type="button"
                                     @click="startWithExercise(librarySelectedId)"
-                                    class="rounded-xl bg-accent px-4 py-3 text-sm font-bold text-slate-950 active:bg-accent-glow">
-                                Train selected
+                                    class="rounded-sm bg-accent/10 border border-accent/50 text-accent hover:bg-accent hover:text-surface-300 px-3 py-2 text-[10px] font-mono font-bold tracking-widest uppercase transition-colors shadow-[0_0_10px_rgba(14,165,233,0.2)] hover:shadow-neon">
+                                Engage Profile
                             </button>
                             <button type="button"
                                     @click="logExerciseDone(librarySelectedId)"
-                                    class="rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-semibold text-white active:bg-white/10">
-                                Mark completed
+                                    class="rounded-sm border border-white/20 bg-white/5 px-3 py-2 text-[10px] font-mono font-bold tracking-widest text-white uppercase hover:bg-white/10 transition-colors">
+                                Bypass (Done)
                             </button>
                         </div>
                     </div>
 
-                    <p class="mt-3 text-xs text-emerald-300" x-show="smartMessage" x-text="smartMessage"></p>
+                    <p class="mt-3 text-[10px] font-mono tracking-wider text-accent text-center" x-show="smartMessage" x-text="smartMessage"></p>
 
                     <template x-if="primarySmartRecommendation">
-                        <div class="mt-4 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-3">
+                        <div class="mt-4 rounded-lg border border-accent/30 bg-accent/5 p-4 relative z-10 shadow-[0_0_15px_rgba(14,165,233,0.1)]">
                             <div class="flex items-start justify-between gap-3">
                                 <div class="min-w-0">
-                                    <p class="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-300">Best next</p>
-                                    <h3 class="mt-1 font-display text-lg font-bold text-white" x-text="primarySmartRecommendation.name"></h3>
-                                    <p class="mt-1 text-xs text-slate-300">
-                                        <span x-text="`${primarySmartRecommendation.sets} x ${primarySmartRecommendation.reps}`"></span>
-                                        <span> · </span>
-                                        <span x-text="`Suggested ${libraryWeightLabel(primarySmartRecommendation)}`"></span>
+                                    <p class="text-[9px] font-bold uppercase tracking-[0.2em] text-accent font-mono mb-1">Optimal Route</p>
+                                    <h3 class="font-display text-lg font-bold text-white" x-text="primarySmartRecommendation.name"></h3>
+                                    <p class="mt-1 text-[10px] font-mono tracking-wider text-slate-300">
+                                        <span class="text-accent" x-text="`${primarySmartRecommendation.sets} x ${primarySmartRecommendation.reps}`"></span>
+                                        <span> // </span>
+                                        <span x-text="`Target: ${libraryWeightLabel(primarySmartRecommendation)}`"></span>
                                     </p>
-                                    <p class="mt-1 text-[11px] text-slate-400" x-text="primarySmartRecommendation.muscle_focus"></p>
                                 </div>
-                                <span class="flex-shrink-0 rounded-full bg-white/5 px-2.5 py-1 text-[10px] text-emerald-200" x-text="primarySmartRecommendation.category_label"></span>
+                                <span class="flex-shrink-0 rounded-[3px] border border-white/10 bg-white/5 px-2 py-0.5 text-[9px] font-mono uppercase tracking-widest text-slate-300" x-text="primarySmartRecommendation.category_label"></span>
                             </div>
                             <div class="mt-3 grid grid-cols-2 gap-2">
                                 <button type="button"
                                         @click="startWithExercise(primarySmartRecommendation.id)"
-                                        class="rounded-xl bg-emerald-400 px-3 py-3 text-sm font-bold text-slate-950 active:bg-emerald-300">
-                                    Train next
+                                        class="rounded-sm bg-accent border border-accent text-surface-300 hover:bg-surface-300 hover:text-accent px-3 py-2 text-[10px] font-mono font-bold tracking-widest uppercase transition-colors shadow-neon">
+                                    Execute
                                 </button>
                                 <button type="button"
                                         @click="logExerciseDone(primarySmartRecommendation.id)"
-                                        class="rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm font-semibold text-white active:bg-white/10">
-                                    Mark done
+                                        class="rounded-sm border border-white/20 bg-transparent px-3 py-2 text-[10px] font-mono font-bold tracking-widest text-white uppercase hover:bg-white/5 transition-colors">
+                                    Bypass
                                 </button>
                             </div>
-                        </div>
-                    </template>
-
-                    <template x-if="alternateSmartRecommendations.length">
-                        <div class="mt-3 space-y-2">
-                            <p class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Other good options</p>
-                            <template x-for="exercise in alternateSmartRecommendations" :key="exercise.id">
-                                <button type="button"
-                                        @click="startWithExercise(exercise.id)"
-                                        class="w-full rounded-2xl border border-white/10 bg-slate-950/45 p-3 text-left active:bg-white/5">
-                                    <div class="flex items-start justify-between gap-3">
-                                        <div class="min-w-0">
-                                            <p class="text-sm font-semibold leading-tight text-white" x-text="exercise.name"></p>
-                                            <p class="mt-1 text-xs text-slate-400">
-                                                <span x-text="`${exercise.sets} x ${exercise.reps}`"></span>
-                                                <span> · </span>
-                                                <span x-text="libraryWeightLabel(exercise)"></span>
-                                            </p>
-                                        </div>
-                                        <span class="flex-shrink-0 rounded-full bg-white/5 px-2.5 py-1 text-[10px] text-slate-300" x-text="exercise.category_label"></span>
-                                    </div>
-                                </button>
-                            </template>
                         </div>
                     </template>
                 </div>
             </template>
 
-            <div class="rounded-3xl border border-white/10 bg-white/[0.03] p-4">
-                <div class="flex items-start justify-between gap-3">
+            <!-- Exercise Overview (Sidebar / Top) -->
+            <div class="glass-panel rounded-xl border border-white/10 p-4">
+                <div class="flex items-start justify-between gap-3 border-b border-white/5 pb-3 mb-3">
                     <div class="min-w-0">
-                        <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-accent/80">Exercise Overview</p>
-                        <h2 class="mt-1 font-display text-lg font-bold text-white">{{ model.workout.name }}</h2>
-                        <p class="mt-1 text-xs text-slate-400" x-show="workout.hypertrophy_focus" x-text="workout.hypertrophy_focus"></p>
+                        <p class="text-[10px] font-bold uppercase tracking-[0.2em] text-accent font-mono">// ITINERARY</p>
+                        <h2 class="font-display text-lg font-bold text-white tracking-wide mt-1">{{ model.workout.name }}</h2>
                     </div>
-                    <span class="flex-shrink-0 rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-slate-300">{{ model.workout.target_minutes }} min</span>
+                    <span class="flex-shrink-0 rounded-[3px] border border-white/10 bg-white/5 px-2 py-0.5 text-[9px] font-mono tracking-widest text-slate-400 uppercase">{{ model.workout.target_minutes }} MIN</span>
                 </div>
 
-                <div class="mt-4 space-y-2">
+                <div class="space-y-1.5">
                     <template x-for="(exercise, index) in workout.exercises" :key="exercise.id">
                         <button type="button"
                                 @click="selectExercise(index)"
-                                class="w-full rounded-2xl border px-4 py-3 text-left transition active:scale-[0.99]"
+                                class="w-full rounded-md border p-3 text-left transition-all active:scale-[0.99] group relative overflow-hidden"
                                 :class="exerciseOverviewClass(index)">
-                            <div class="flex items-start justify-between gap-3">
+                            <div class="flex items-start justify-between gap-3 relative z-10">
                                 <div class="min-w-0">
-                                    <p class="font-semibold leading-tight text-white" x-text="exercise.name"></p>
-                                    <p class="mt-1 text-xs text-slate-400">
+                                    <p class="font-bold leading-tight text-white group-hover:text-accent transition-colors text-sm" x-text="exercise.name"></p>
+                                    <p class="mt-1 text-[10px] font-mono tracking-wider text-slate-400">
                                         <span x-text="`${exercise.sets} x ${exercise.reps}`"></span>
-                                        <span> · </span>
-                                        <span x-text="`Suggested ${exerciseWeightLabel(index)}`"></span>
+                                        <span class="opacity-50"> // </span>
+                                        <span x-text="`Target ${exerciseWeightLabel(index)}`"></span>
                                     </p>
-                                    <p class="mt-1 text-[11px] text-slate-500" x-show="exercise.muscle_focus" x-text="exercise.muscle_focus"></p>
                                 </div>
-                                <span class="flex-shrink-0 rounded-full bg-white/5 px-2.5 py-1 text-[11px] text-slate-300" x-text="exerciseProgressLabel(index)"></span>
+                                <span class="flex-shrink-0 text-[9px] font-mono font-bold tracking-widest px-1.5 py-0.5 border rounded-sm transition-colors uppercase" 
+                                      :class="index === exerciseIdx ? 'bg-accent text-surface-300 border-accent' : 'bg-surface-200 border-white/10 text-slate-500 group-hover:border-accent/30'" 
+                                      x-text="exerciseProgressLabel(index)"></span>
                             </div>
-                            <div class="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5">
-                                <div class="h-full bg-gradient-to-r from-accent to-amber-400 transition-all duration-300"
-                                     :style="`width: ${exerciseProgressPct(index)}%`"></div>
+                            <!-- Mini Progress Bar inside the button -->
+                            <div class="mt-2 h-[2px] w-full bg-surface-200 overflow-hidden opacity-50">
+                                <div class="h-full bg-accent transition-all duration-300" :style="`width: ${exerciseProgressPct(index)}%`"></div>
                             </div>
                         </button>
                     </template>
                 </div>
-
-                <template x-if="workout.session_tips && workout.session_tips.length">
-                    <div class="mt-4 grid gap-2">
-                        <template x-for="tip in workout.session_tips" :key="tip">
-                            <p class="rounded-2xl border border-white/10 bg-slate-950/45 px-3 py-2 text-xs leading-relaxed text-slate-300" x-text="tip"></p>
-                        </template>
-                    </div>
-                </template>
             </div>
 
-            <div class="overflow-hidden rounded-3xl border border-white/10 bg-white/[0.02]">
-                <div class="relative aspect-[4/3] overflow-hidden bg-slate-50">
+            <!-- Active Exercise View -->
+            <div class="glass-panel rounded-xl border border-white/10 overflow-hidden shadow-2xl relative">
+                <!-- Tech overlay lines on edges -->
+                <div class="absolute top-0 left-0 w-8 h-8 border-t-2 border-l-2 border-accent/50 z-20 pointer-events-none"></div>
+                <div class="absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 border-accent/50 z-20 pointer-events-none"></div>
+
+                <!-- Imagery Area -->
+                <div class="relative aspect-video overflow-hidden bg-surface-300 border-b border-white/10 group">
+                    <!-- Scanner effect overlay -->
+                    <div class="absolute inset-0 pointer-events-none z-10 bg-[linear-gradient(transparent_50%,rgba(0,0,0,0.25)_50%)] bg-[length:100%_4px]"></div>
+                    
                     <template x-if="currentExercise.exercise_slug && !imageFailed">
-                        <div class="absolute inset-0">
-                            <img :src="`${$root.dataset.imageBase}/${currentExercise.exercise_slug}/0.jpg`"
-                                 :alt="currentExercise.name + ' — start'"
-                                 :key="currentExercise.id + '-0'"
-                                 class="exercise-frame exercise-frame-a absolute inset-0 h-full w-full object-contain"
-                                 loading="eager" decoding="async"
-                                 @error="imageFailed = true">
-                            <img :src="`${$root.dataset.imageBase}/${currentExercise.exercise_slug}/1.jpg`"
-                                 :alt="currentExercise.name + ' — end'"
-                                 :key="currentExercise.id + '-1'"
-                                 class="exercise-frame exercise-frame-b absolute inset-0 h-full w-full object-contain"
-                                 loading="eager" decoding="async"
-                                 @error="imageFailed = true">
+                        <div class="absolute inset-0 z-0">
+                            <!-- Frame A: Start Position -->
+                            <div class="exercise-frame exercise-frame-a absolute inset-0 h-full w-full">
+                                <img :src="`${$root.dataset.imageBase}/${currentExercise.exercise_slug}/0.jpg`"
+                                     class="h-full w-full object-cover brightness-90 saturate-[0.8]"
+                                     loading="eager" decoding="async" @error="imageFailed = true">
+                                <div class="absolute bottom-4 right-4 rounded-sm bg-surface-300/80 border border-white/20 px-2.5 py-1 text-[10px] font-mono tracking-widest text-white uppercase backdrop-blur-md shadow-lg">Start Position</div>
+                            </div>
+                            <!-- Frame B: Finish Position -->
+                            <div class="exercise-frame exercise-frame-b absolute inset-0 h-full w-full">
+                                <img :src="`${$root.dataset.imageBase}/${currentExercise.exercise_slug}/1.jpg`"
+                                     class="h-full w-full object-cover brightness-90 saturate-[0.8]"
+                                     loading="eager" decoding="async" @error="imageFailed = true">
+                                <div class="absolute bottom-4 right-4 rounded-sm bg-accent/90 border border-accent px-2.5 py-1 text-[10px] font-mono tracking-widest text-surface-300 font-bold uppercase backdrop-blur-md shadow-neon">Finish Position</div>
+                            </div>
                         </div>
                     </template>
                     <template x-if="!currentExercise.exercise_slug || imageFailed">
-                        <div class="flex h-full w-full flex-col items-center justify-center gap-2 bg-slate-900 text-slate-400">
-                            <svg viewBox="0 0 24 24" fill="none" class="h-16 w-16" stroke="currentColor" stroke-width="1.5"><path d="M6 6l12 12M4 8l2-2M16 20l2-2M2 12l2 2M18 8l2-2M8 20l-2-2"/></svg>
-                            <p class="text-xs">Diagram unavailable offline</p>
+                        <div class="flex h-full w-full flex-col items-center justify-center gap-2 text-slate-600 bg-surface-200">
+                            <svg viewBox="0 0 24 24" fill="none" class="h-10 w-10 opacity-50" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                            <p class="text-[10px] font-mono tracking-widest uppercase">Visual data offline</p>
                         </div>
                     </template>
-                    <div class="absolute left-3 top-3 rounded-full bg-slate-950/80 px-3 py-1 text-[11px] font-semibold text-slate-200 backdrop-blur">
-                        <span x-text="exerciseIdx + 1"></span> / <span x-text="workout.exercises.length"></span>
+
+                    <div class="absolute left-3 top-3 rounded-sm border border-accent/50 bg-surface-300/80 px-2 py-0.5 text-[10px] font-bold font-mono text-accent backdrop-blur z-20 shadow-neon">
+                        SEQ <span x-text="exerciseIdx + 1"></span>/<span x-text="workout.exercises.length"></span>
                     </div>
                     <template x-if="currentExercise.personal_best_label">
-                        <div class="absolute right-3 top-3 rounded-full bg-slate-950/80 px-3 py-1 text-[11px] font-semibold text-slate-200 backdrop-blur">
-                            PB <span x-text="currentExercise.personal_best_label"></span>
+                        <div class="absolute right-3 top-3 rounded-sm border border-amber-500/50 bg-surface-300/80 px-2 py-0.5 text-[10px] font-bold font-mono text-amber-500 backdrop-blur z-20 shadow-[0_0_10px_rgba(245,158,11,0.3)]">
+                            PB: <span x-text="currentExercise.personal_best_label"></span>
                         </div>
                     </template>
                 </div>
 
-                <div class="p-5">
-                    <h2 class="font-display text-2xl font-bold leading-tight text-white" x-text="currentExercise.name"></h2>
+                <!-- Exercise Controls & Info -->
+                <div class="p-5 relative">
+                    <h2 class="font-display text-2xl font-bold leading-tight text-white tracking-wide" x-text="currentExercise.name"></h2>
                     <template x-if="currentExercise.notes">
-                        <p class="mt-1.5 text-sm leading-relaxed text-slate-400" x-text="currentExercise.notes"></p>
-                    </template>
-                    <template x-if="currentExercise.hypertrophy_tip">
-                        <p class="mt-3 rounded-2xl border border-accent/20 bg-accent/10 px-3 py-2 text-sm leading-relaxed text-accent" x-text="currentExercise.hypertrophy_tip"></p>
+                        <p class="mt-2 text-xs font-mono tracking-wider text-slate-400 border-l border-white/20 pl-3 py-1" x-text="currentExercise.notes"></p>
                     </template>
 
-                    <div class="mt-4 grid grid-cols-2 gap-2 text-xs text-slate-300">
-                        <template x-if="currentExercise.target_rir">
-                            <div class="rounded-2xl border border-white/10 bg-white/[0.04] p-3">
-                                <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Target RIR</div>
-                                <div class="mt-1 font-semibold text-white" x-text="currentExercise.target_rir"></div>
-                            </div>
-                        </template>
-                        <template x-if="currentExercise.tempo">
-                            <div class="rounded-2xl border border-white/10 bg-white/[0.04] p-3">
-                                <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Tempo</div>
-                                <div class="mt-1 font-semibold text-white" x-text="currentExercise.tempo"></div>
-                            </div>
-                        </template>
-                    </div>
-
-                    <div class="mt-4 grid grid-cols-3 gap-2">
-                        <div class="rounded-2xl border border-white/5 bg-white/[0.04] p-3 text-center">
-                            <div class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Set</div>
-                            <div class="mt-1 font-display text-xl font-bold text-white tabular-nums">
-                                <span x-text="setIdx + 1"></span><span class="text-base text-slate-500">/<span x-text="currentExercise.sets"></span></span>
+                    <div class="mt-5 grid grid-cols-3 gap-2">
+                        <div class="rounded-sm border border-white/5 bg-surface-200 p-3 flex flex-col items-center justify-center relative overflow-hidden">
+                            <div class="absolute top-0 left-0 w-full h-[1px] bg-accent/30"></div>
+                            <div class="text-[9px] font-bold uppercase tracking-[0.2em] font-mono text-slate-500">Current Set</div>
+                            <div class="mt-1 font-display text-2xl font-bold text-white tabular-nums">
+                                <span class="text-accent" x-text="setIdx + 1"></span><span class="text-xs text-slate-600">/<span x-text="currentExercise.sets"></span></span>
                             </div>
                         </div>
-                        <div class="rounded-2xl border border-white/5 bg-white/[0.04] p-3 text-center">
-                            <div class="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Reps</div>
-                            <div class="mt-1 font-display text-xl font-bold text-white" x-text="currentExercise.reps"></div>
+                        <div class="rounded-sm border border-white/5 bg-surface-200 p-3 flex flex-col items-center justify-center relative overflow-hidden">
+                            <div class="absolute top-0 left-0 w-full h-[1px] bg-accent/30"></div>
+                            <div class="text-[9px] font-bold uppercase tracking-[0.2em] font-mono text-slate-500">Target Reps</div>
+                            <div class="mt-1 font-display text-2xl font-bold text-white" x-text="currentExercise.reps"></div>
                         </div>
-                        <div class="rounded-2xl border border-accent/30 bg-accent/10 p-3 text-center">
-                            <div class="text-[10px] font-semibold uppercase tracking-wider text-accent">Working weight</div>
-                            <div class="mt-1 font-display text-base font-bold leading-tight text-white" x-text="currentWeightLabel"></div>
+                        <div class="rounded-sm border border-accent bg-accent/5 p-3 flex flex-col items-center justify-center relative overflow-hidden shadow-[inset_0_0_15px_rgba(14,165,233,0.15)]">
+                            <div class="absolute top-0 left-0 w-full h-[1px] bg-accent shadow-neon"></div>
+                            <div class="text-[9px] font-bold uppercase tracking-[0.2em] font-mono text-accent">Active Load</div>
+                            <div class="mt-1 font-display text-xl font-bold text-white truncate w-full text-center" x-text="currentWeightLabel"></div>
                         </div>
                     </div>
 
-                    <div class="mt-4 rounded-2xl border border-white/10 bg-slate-950/50 p-4">
+                    <!-- Load Adjuster -->
+                    <div class="mt-4 rounded-lg border border-white/10 bg-surface-200 p-4">
                         <div class="flex items-center justify-between gap-3">
                             <div>
-                                <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Suggested load</div>
-                                <div class="mt-1 font-display text-2xl font-bold text-white" x-text="currentSuggestedWeightLabel"></div>
+                                <div class="text-[9px] font-bold uppercase tracking-[0.2em] font-mono text-slate-500">Suggested Load</div>
+                                <div class="mt-0.5 font-display text-xl font-bold text-white tracking-wider" x-text="currentSuggestedWeightLabel"></div>
                             </div>
-                            <div class="flex items-center gap-2">
-                                <button @click="adjustWeight(-1)"
-                                        class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white active:bg-white/10">
-                                    −
-                                </button>
-                                <button @click="adjustWeight(1)"
-                                        class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/5 text-white active:bg-white/10">
-                                    +
-                                </button>
+                            <div class="flex items-center gap-1 bg-surface-300 rounded-sm border border-white/10 p-1">
+                                <button @click="adjustWeight(-1)" class="w-10 h-10 flex items-center justify-center rounded-[2px] bg-white/5 hover:bg-accent/20 hover:text-accent text-white font-mono text-lg transition-colors border border-transparent hover:border-accent/50 shadow-sm">−</button>
+                                <button @click="adjustWeight(1)" class="w-10 h-10 flex items-center justify-center rounded-[2px] bg-white/5 hover:bg-accent/20 hover:text-accent text-white font-mono text-lg transition-colors border border-transparent hover:border-accent/50 shadow-sm">+</button>
                             </div>
                         </div>
-                        <p class="mt-3 text-xs text-slate-400" x-text="currentExerciseState.recommendationReason"></p>
-                        <template x-if="currentExercise.progression_rule">
-                            <p class="mt-2 text-xs leading-relaxed text-slate-300" x-text="currentExercise.progression_rule"></p>
-                        </template>
-                        <div class="mt-3 flex flex-wrap gap-2 text-[11px] text-slate-300">
-                            <span class="rounded-full bg-white/5 px-2.5 py-1">
-                                Plan <span x-text="currentExerciseState.planWeightLabel"></span>
-                            </span>
-                            <template x-if="currentExercise.last_logged_label">
-                                <span class="rounded-full bg-white/5 px-2.5 py-1">
-                                    Last <span x-text="currentExercise.last_logged_label"></span> · <span x-text="currentExercise.last_completed_label"></span>
-                                </span>
-                            </template>
-                        </div>
-                        <button @click="resetWeight()"
-                                class="mt-3 text-xs text-slate-400 underline-offset-4 active:text-white active:underline">
-                            Reset to suggested load
-                        </button>
+                        <p class="mt-3 text-[10px] font-mono tracking-wider text-accent border-l-2 border-accent pl-2" x-text="currentExerciseState.recommendationReason"></p>
                     </div>
-
-                    <template x-if="currentExercise.last_completed_sets">
-                        <div class="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                            <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Last time</div>
-                            <p class="mt-2 text-sm text-slate-300">
-                                <span x-text="currentExercise.last_completed_sets"></span>/<span x-text="currentExercise.last_target_sets"></span>
-                                sets at <span x-text="currentExercise.last_logged_label"></span>
-                                · <span x-text="currentExercise.last_completed_label"></span>
-                            </p>
-                            <template x-if="currentExercise.last_notes">
-                                <p class="mt-2 text-xs text-slate-500" x-text="currentExercise.last_notes"></p>
-                            </template>
-                        </div>
-                    </template>
                 </div>
             </div>
 
+            <!-- Rest Timer Overlay -->
             <template x-if="resting">
-                <div class="rounded-3xl border border-accent/30 bg-gradient-to-br from-accent/15 via-accent/5 to-transparent p-6 text-center">
-                    <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-accent">Rest</p>
-                    <div class="mt-1 font-display text-7xl font-bold leading-none text-white tabular-nums"
-                         :class="restRemaining <= 5 ? 'animate-pulse text-accent' : ''"
-                         x-text="formatTime(restRemaining)"></div>
-                    <p class="mt-2 text-sm text-slate-400">
-                        Next: Set <span x-text="nextSetLabel"></span> · <span x-text="nextExerciseName"></span>
-                    </p>
-                    <div class="mt-5 grid grid-cols-3 gap-2">
-                        <button @click="adjustRest(-15)" class="rounded-xl border border-white/10 bg-white/5 px-2 py-3 text-sm font-semibold text-white active:bg-white/10">−15s</button>
-                        <button @click="skipRest()" class="inline-flex items-center justify-center gap-1.5 rounded-xl bg-accent px-3 py-3 text-sm font-bold text-slate-950 active:bg-accent-glow">
-                            Skip
-                            <svg viewBox="0 0 24 24" fill="none" class="h-4 w-4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4l10 8-10 8V4zM19 5v14"/></svg>
-                        </button>
-                        <button @click="adjustRest(15)" class="rounded-xl border border-white/10 bg-white/5 px-2 py-3 text-sm font-semibold text-white active:bg-white/10">+15s</button>
+                <div class="fixed inset-0 z-50 flex items-center justify-center px-4 backdrop-blur-md bg-surface-300/90">
+                    <div class="glass-panel rounded-2xl border-2 border-accent shadow-neon-intense w-full max-w-sm p-8 text-center relative overflow-hidden">
+                        <!-- Pulse effect background -->
+                        <div class="absolute inset-0 bg-accent/5 animate-pulse"></div>
+                        <div class="relative z-10">
+                            <p class="text-xs font-bold uppercase tracking-[0.3em] font-mono text-accent mb-2">Recovery Phase</p>
+                            <div class="font-display text-8xl font-bold text-white tabular-nums tracking-tighter"
+                                 :class="restRemaining <= 5 ? 'text-red-500 animate-pulse drop-shadow-[0_0_20px_rgba(239,68,68,0.8)]' : 'drop-shadow-[0_0_15px_rgba(14,165,233,0.5)]'"
+                                 x-text="formatTime(restRemaining)"></div>
+                            <p class="mt-4 text-xs font-mono tracking-widest text-slate-300 uppercase">
+                                Up Next: Set <span class="text-accent" x-text="nextSetLabel"></span> // <span class="text-white" x-text="nextExerciseName"></span>
+                            </p>
+                            <div class="mt-8 grid grid-cols-3 gap-3">
+                                <button @click="adjustRest(-15)" class="rounded-sm border border-white/20 bg-surface-200 px-2 py-3 text-xs font-mono font-bold text-white hover:bg-white/10 transition-colors">−15s</button>
+                                <button @click="skipRest()" class="rounded-sm bg-accent border border-accent/50 text-surface-300 hover:bg-surface-300 hover:text-accent hover:border-accent px-2 py-3 text-xs font-mono font-bold uppercase tracking-widest transition-all shadow-neon">OVERRIDE</button>
+                                <button @click="adjustRest(15)" class="rounded-sm border border-white/20 bg-surface-200 px-2 py-3 text-xs font-mono font-bold text-white hover:bg-white/10 transition-colors">+15s</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </template>
 
+            <!-- Main Actions -->
             <template x-if="!resting">
-                <div class="space-y-3">
+                <div class="space-y-3 mt-6">
                     <button @click="allSetsProcessed ? nextStage() : completeSet()"
                             :disabled="currentExerciseDone && !allSetsProcessed"
-                            class="w-full rounded-2xl bg-gradient-to-br from-accent to-amber-500 px-6 py-5 font-display text-lg font-bold text-slate-950 shadow-lg shadow-accent/20 transition-transform active:scale-[0.99] active:brightness-110 disabled:opacity-50">
-                        <span x-text="allSetsProcessed ? 'Finish workout' : (currentExerciseDone ? 'Exercise complete' : 'Complete set and start rest')"></span>
+                            class="w-full rounded-md bg-accent/10 border border-accent text-accent hover:bg-accent hover:text-surface-300 px-6 py-5 font-display text-xl font-bold tracking-widest uppercase transition-all shadow-neon disabled:opacity-30 disabled:pointer-events-none relative overflow-hidden group">
+                        <div class="absolute inset-0 bg-[linear-gradient(45deg,transparent_25%,rgba(255,255,255,0.2)_50%,transparent_75%)] bg-[length:250%_250%,100%_100%] bg-[position:-100%_0,0_0] bg-no-repeat group-hover:animate-[shimmer_1.5s_infinite]"></div>
+                        <span class="relative z-10" x-text="allSetsProcessed ? 'INITIALIZE FINISH SEQUENCE' : (currentExerciseDone ? 'EXERCISE COMPLETE' : 'LOG SET & INITIATE REST')"></span>
                     </button>
                     <div class="grid grid-cols-2 gap-3">
                         <button @click="prevSet()" :disabled="historyStack.length === 0"
-                                class="rounded-xl border border-white/10 bg-white/5 px-4 py-4 text-sm font-semibold text-white active:bg-white/10 disabled:opacity-40">
-                            Undo last action
+                                class="rounded-sm border border-white/10 bg-surface-200 hover:bg-surface-100 hover:border-white/30 px-4 py-3 text-[10px] font-mono tracking-widest uppercase font-bold text-white transition-all disabled:opacity-30">
+                            Undo Last
                         </button>
                         <button @click="skipSet()"
                                 :disabled="currentExerciseDone"
-                                class="rounded-xl border border-white/10 bg-white/5 px-4 py-4 text-sm font-semibold text-white active:bg-white/10 disabled:opacity-40">
-                            Skip set
+                                class="rounded-sm border border-amber-500/20 bg-amber-500/5 hover:bg-amber-500/10 hover:border-amber-500/50 px-4 py-3 text-[10px] font-mono tracking-widest uppercase font-bold text-amber-500 transition-all disabled:opacity-30">
+                            Bypass Set
                         </button>
                     </div>
                 </div>
             </template>
 
-            <div class="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
-                <div class="flex items-center justify-between gap-3">
+            <!-- Session Notes Footer -->
+            <div class="glass-panel rounded-xl border border-white/10 p-5 mt-6">
+                <div class="flex items-center justify-between border-b border-white/5 pb-3 mb-4">
                     <div>
-                        <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-accent/80">Session Notes</p>
-                        <h3 class="mt-1 font-display text-lg font-bold text-white">Log what mattered today</h3>
+                        <p class="text-[10px] font-bold uppercase tracking-[0.2em] text-accent font-mono">// LOGGING</p>
+                        <h3 class="font-display text-base font-bold text-white tracking-wide mt-1">Session Data Entry</h3>
                     </div>
-                    <div class="text-xs text-slate-500" x-text="draftSavedAt ? 'Draft protected' : 'Autosaves as you go'"></div>
+                    <div class="text-[9px] font-mono tracking-widest uppercase text-accent animate-pulse" x-show="draftSavedAt">Data Secured</div>
                 </div>
-                <textarea x-model="sessionNote"
-                          @input.debounce.400ms="persistDraft()"
-                          rows="4"
-                          class="mt-4 w-full rounded-2xl border border-white/10 bg-slate-950/60 px-3 py-3 text-sm text-white placeholder:text-slate-500"
-                          placeholder="Examples: bench felt snappy, left hamstring tight, deadlifts flew, sleep was rough but still moved well."></textarea>
-                <div class="mt-3 grid grid-cols-3 gap-2 text-xs text-slate-400">
-                    <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
-                        Elapsed
-                        <div class="mt-1 text-white" x-text="elapsedLabel"></div>
-                    </div>
-                    <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
-                        Completed sets
-                        <div class="mt-1 text-white" x-text="completedSets"></div>
-                    </div>
-                    <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-3">
-                        Session volume
-                        <div class="mt-1 text-white" x-text="volumeLabel"></div>
-                    </div>
-                </div>
+                <textarea x-model="sessionNote" @input.debounce.400ms="persistDraft()" rows="3"
+                          class="w-full rounded-sm border border-white/10 bg-surface-200 px-3 py-2 text-xs font-mono text-white focus:border-accent focus:ring-1 focus:ring-accent outline-none resize-none placeholder:text-slate-600"
+                          placeholder="Log anomalies, joint feels, or general performance notes..."></textarea>
             </div>
         </div>
     </template>
 
+    <!-- Workout Done Screen -->
     <template x-if="stage === 'done'">
-        <div class="mt-4 rounded-3xl border border-white/10 bg-gradient-to-br from-accent/10 via-white/[0.02] to-transparent p-8">
-            <div class="mx-auto mb-4 inline-flex h-16 w-16 items-center justify-center rounded-full bg-accent/20 text-accent">
-                <svg viewBox="0 0 24 24" fill="none" class="h-8 w-8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
-            </div>
-            <h2 class="text-center font-display text-3xl font-bold text-white">Session complete.</h2>
-            <p class="mt-2 text-center text-slate-400">
-                Week <span x-text="week"></span> · <span x-text="completedSets"></span>/<span x-text="totalSets"></span> sets · <span x-text="elapsedLabel"></span>
-            </p>
-
-            <div class="mt-6 grid grid-cols-2 gap-3">
-                <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-4 text-center">
-                    <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Volume</div>
-                    <div class="mt-1 font-display text-2xl font-bold text-white" x-text="volumeLabel"></div>
+        <div class="mt-6 glass-panel rounded-2xl border border-accent/40 shadow-neon-intense p-8 relative overflow-hidden text-center">
+            <div class="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(14,165,233,0.15)_0%,transparent_70%)]"></div>
+            
+            <div class="relative z-10">
+                <div class="mx-auto mb-6 inline-flex h-20 w-20 items-center justify-center rounded-full border-2 border-accent bg-accent/10 text-accent shadow-neon animate-[pulse_3s_infinite]">
+                    <svg viewBox="0 0 24 24" fill="none" class="h-10 w-10" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
                 </div>
-                <div class="rounded-2xl border border-white/10 bg-slate-950/50 p-4 text-center">
-                    <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Duration</div>
-                    <div class="mt-1 font-display text-2xl font-bold text-white" x-text="elapsedLabel"></div>
+                <p class="text-[10px] font-bold uppercase tracking-[0.3em] font-mono text-accent mb-2">Protocol Finalized</p>
+                <h2 class="font-display text-4xl font-bold text-white tracking-wider uppercase">Session Complete</h2>
+                
+                <div class="mt-8 grid grid-cols-2 gap-4">
+                    <div class="rounded-lg border border-white/10 bg-surface-200/50 p-4 backdrop-blur">
+                        <div class="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-slate-500 mb-1">Total Tonnage</div>
+                        <div class="font-display text-3xl font-bold text-accent" x-text="volumeLabel"></div>
+                    </div>
+                    <div class="rounded-lg border border-white/10 bg-surface-200/50 p-4 backdrop-blur">
+                        <div class="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-slate-500 mb-1">Duration</div>
+                        <div class="font-display text-3xl font-bold text-white" x-text="elapsedLabel"></div>
+                    </div>
                 </div>
-            </div>
 
-            <div class="mt-6 rounded-2xl border border-white/10 bg-slate-950/50 p-5">
-                <template x-if="saving">
-                    <p class="text-sm text-slate-300">Saving your workout and updating your training history...</p>
-                </template>
-                <template x-if="saved && saveResult">
-                    <div class="space-y-4">
-                        <p class="text-sm text-emerald-300">Workout saved. Your next recommendation will use this session.</p>
-                        <p class="text-sm text-slate-300" x-text="saveResult.coach_note"></p>
-                        <template x-if="saveResult.achievements && saveResult.achievements.length">
-                            <div class="flex flex-wrap gap-2">
-                                <template x-for="achievement in saveResult.achievements" :key="achievement">
-                                    <span class="rounded-full border border-accent/20 bg-accent/10 px-2.5 py-1 text-[11px] text-accent" x-text="achievement"></span>
-                                </template>
-                            </div>
-                        </template>
-                    </div>
-                </template>
-                <template x-if="saveError">
-                    <div class="space-y-3">
-                        <p class="text-sm text-rose-300" x-text="saveError"></p>
-                        <button @click="saveSession()"
-                                class="rounded-xl bg-white/10 px-4 py-3 text-sm font-semibold text-white">
-                            Retry save
-                        </button>
-                    </div>
-                </template>
-            </div>
+                <div class="mt-8 rounded-lg border border-white/10 bg-surface-200 p-5 text-left">
+                    <template x-if="saving">
+                        <p class="text-xs font-mono tracking-widest uppercase text-accent animate-pulse text-center">Encrypting and synchronizing data...</p>
+                    </template>
+                    <template x-if="saved && saveResult">
+                        <div class="space-y-4">
+                            <p class="text-xs font-mono tracking-widest uppercase text-emerald-400 border-l-2 border-emerald-400 pl-2">Data stored successfully in local vault.</p>
+                            <p class="text-sm text-slate-300" x-text="saveResult.coach_note"></p>
+                            <template x-if="saveResult.achievements && saveResult.achievements.length">
+                                <div class="flex flex-wrap gap-2 pt-2 border-t border-white/5">
+                                    <template x-for="achievement in saveResult.achievements" :key="achievement">
+                                        <span class="rounded-[3px] border border-accent/30 bg-accent/10 px-2 py-1 text-[9px] font-mono font-bold tracking-widest uppercase text-accent" x-text="achievement"></span>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
 
-            <div class="mt-6 flex flex-col gap-3">
-                <a href="{{ url_for('index') }}" class="inline-flex items-center justify-center rounded-xl bg-accent px-5 py-4 font-semibold text-slate-950 active:bg-accent-glow">Back to dashboard</a>
+                <div class="mt-8">
+                    <a href="{{ url_for('index') }}" class="inline-flex items-center justify-center w-full rounded-md bg-white/5 border border-white/20 hover:bg-white/10 px-5 py-4 font-mono text-xs font-bold tracking-widest uppercase text-white transition-all">Return to Dashboard</a>
+                </div>
             </div>
         </div>
     </template>
