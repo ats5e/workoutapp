@@ -1,31 +1,45 @@
 import os
-import tempfile
 import unittest
+from unittest.mock import patch, MagicMock
+import mongomock
 
 import app
 
 
 class IronLogAppTests(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.db_path = os.path.join(self.temp_dir.name, "ironlog-test.db")
-        os.environ["DATABASE_PATH"] = self.db_path
+        self.mock_mongo_client = mongomock.MongoClient()
+        self.db_patcher = patch('app.get_db', return_value=self.mock_mongo_client.ironlog)
+        self.db_patcher.start()
+        
+        app.init_db()
+
+        self.mock_openai_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = '{"reply": "I checked your history. We will use coach memory.", "recommended_exercise_ids": ["machine-shoulder-press", "lateral-raises", "wide-grip-lat-pulldown", "seated-cable-row"]}'
+        self.mock_openai_client.chat.completions.create.return_value = mock_response
+        
+        self.openai_patcher = patch('app.get_openai_client', return_value=self.mock_openai_client)
+        self.openai_patcher.start()
+
         self.client = app.app.test_client()
 
     def tearDown(self):
-        os.environ.pop("DATABASE_PATH", None)
-        self.temp_dir.cleanup()
+        self.db_patcher.stop()
+        self.openai_patcher.stop()
 
     def test_home_and_workout_pages_render(self):
         home = self.client.get("/")
         workout = self.client.get("/workout/day-1-push")
         exercises = self.client.get("/exercises")
         smart = self.client.get("/smart?start=seated-db-shoulder-press")
+        coach = self.client.get("/coach")
 
         self.assertEqual(home.status_code, 200)
         self.assertEqual(workout.status_code, 200)
         self.assertEqual(exercises.status_code, 200)
         self.assertEqual(smart.status_code, 200)
+        self.assertEqual(coach.status_code, 200)
         self.assertIn(b"Daily Check-in", home.data)
         self.assertIn(b"Exercise Overview", workout.data)
         self.assertIn(b"Target RIR", workout.data)
@@ -37,6 +51,7 @@ class IronLogAppTests(unittest.TestCase):
         self.assertIn(b"Smart Gym Session", smart.data)
         self.assertIn(b"Smart Gym Coach", smart.data)
         self.assertIn(b"Train selected", smart.data)
+        self.assertIn(b"AI Coach", coach.data)
         self.assertNotIn(b"Start Walk", workout.data)
 
     def test_exercise_library_and_recommendations(self):
@@ -53,14 +68,123 @@ class IronLogAppTests(unittest.TestCase):
             for exercise in library["exercises"]
             if exercise["id"] == "seated-db-shoulder-press"
         )
+        machine_press = next(
+            exercise
+            for exercise in library["exercises"]
+            if exercise["id"] == "machine-shoulder-press"
+        )
+        unavailable_rope_row = next(
+            exercise
+            for exercise in library["exercises"]
+            if exercise["id"] == "cable-rope-rear-delt-row"
+        )
         self.assertEqual(shoulder_press["category"], "shoulders")
         self.assertIn("kg", shoulder_press["display_weight_label"])
+        self.assertEqual(machine_press["preference_status"], "preferred")
+        self.assertTrue(machine_press["is_available"])
+        self.assertEqual(unavailable_rope_row["preference_status"], "avoid")
+        self.assertFalse(unavailable_rope_row["is_available"])
         self.assertEqual(recommendations["after"]["id"], "seated-db-shoulder-press")
         self.assertGreaterEqual(len(recommendations["recommendations"]), 4)
         self.assertNotIn(
             "seated-db-shoulder-press",
             [exercise["id"] for exercise in recommendations["recommendations"]],
         )
+        self.assertNotIn(
+            "cable-rope-rear-delt-row",
+            [exercise["id"] for exercise in recommendations["recommendations"]],
+        )
+
+    def test_exercise_preferences_change_smart_recommendations(self):
+        self.client.post(
+            "/api/sessions",
+            json={
+                "workout_id": "smart-session",
+                "workout_name": "Smart Gym Session",
+                "completed_at": "2026-05-12T09:00:00Z",
+                "exercise_logs": [
+                    {
+                        "exercise_id": "neutral-grip-pulldown",
+                        "exercise_name": "Neutral-grip Lat Pulldown",
+                        "reps": "10",
+                        "target_sets": 3,
+                        "completed_sets": 3,
+                        "skipped_sets": 0,
+                        "working_weight": 50,
+                        "working_weight_label": "50 kg",
+                    }
+                ],
+            },
+        )
+        preference = self.client.post(
+            "/api/exercise-preferences/seated-cable-row",
+            json={"status": "avoid", "notes": "Cable station setup does not work for me."},
+        ).get_json()
+        library = self.client.get("/api/exercises").get_json()
+        recommendations = self.client.get(
+            "/api/recommendations?after=machine-shoulder-press&limit=12"
+        ).get_json()
+
+        seated_row = next(
+            exercise
+            for exercise in library["exercises"]
+            if exercise["id"] == "seated-cable-row"
+        )
+        self.assertEqual(preference["preference"]["status"], "avoid")
+        self.assertEqual(seated_row["preference_status"], "avoid")
+        self.assertFalse(seated_row["is_available"])
+        self.assertNotIn(
+            "seated-cable-row",
+            [exercise["id"] for exercise in recommendations["recommendations"]],
+        )
+
+    def test_ai_coach_chat_uses_memory_and_recommendations(self):
+        response = self.client.post(
+            "/api/coach/chat",
+            json={"message": "I did machine shoulder press and lateral raises yesterday."},
+        )
+        data = response.get_json()
+        context = self.client.get("/api/coach/context").get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("coach memory", data["reply"])
+        self.assertTrue(
+            any(exercise["id"] == "machine-shoulder-press" for exercise in data["mentioned_exercises"])
+        )
+        self.assertGreaterEqual(len(data["recommendations"]), 3)
+        self.assertGreaterEqual(context["memory_count"], 2)
+
+    def test_recommendations_route_around_busy_equipment_and_week_balance(self):
+        self.client.post(
+            "/api/sessions",
+            json={
+                "workout_id": "smart-session",
+                "workout_name": "Smart Gym Session",
+                "exercise_logs": [
+                    {
+                        "exercise_id": "barbell-bench-press",
+                        "exercise_name": "Barbell Bench Press",
+                        "reps": "8",
+                        "target_sets": 12,
+                        "completed_sets": 12,
+                        "skipped_sets": 0,
+                        "working_weight": 50,
+                        "working_weight_label": "50 kg",
+                    }
+                ],
+            },
+        )
+        recommendations = self.client.get(
+            "/api/recommendations?after=wide-grip-lat-pulldown&unavailable=machine-shoulder-press&limit=3"
+        ).get_json()
+        context = self.client.get("/api/coach/context").get_json()
+
+        self.assertGreater(context["weekly_balance"][0]["sets"], 0)
+        self.assertNotIn(
+            "machine-shoulder-press",
+            [exercise["id"] for exercise in recommendations["recommendations"]],
+        )
+        self.assertEqual(recommendations["recommendations"][0]["category"], "shoulders")
 
     def test_workout_program_matches_requested_rotation(self):
         dashboard = self.client.get("/api/dashboard").get_json()

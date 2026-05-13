@@ -13,6 +13,13 @@ function safeNumber(value, fallback = 0) {
     return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function daysSinceIso(isoString) {
+    if (!isoString) return null;
+    const parsed = new Date(isoString);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return Math.max(0, Math.floor((Date.now() - parsed.getTime()) / 86400000));
+}
+
 function ironlogWeek() {
     let startIso = localStorage.getItem(IRONLOG_KEYS.startDate);
     if (!startIso) {
@@ -239,6 +246,80 @@ function homeView(initialDashboard) {
     };
 }
 
+function aiCoachView(initialModel) {
+    return {
+        model: deepCopy(initialModel),
+        context: deepCopy(initialModel.context || {}),
+        draft: "",
+        sending: false,
+        errorMessage: "",
+        messages: [],
+
+        init() {
+            this.messages = [
+                {
+                    role: "assistant",
+                    content: this.model.greeting || "Ready.",
+                },
+                ...(this.context.recent_messages || []).map((message) => ({
+                    role: message.role,
+                    content: message.content,
+                })),
+            ];
+        },
+
+        get recommendations() {
+            return this.context.recommendations || [];
+        },
+
+        get nextWorkout() {
+            return this.context.next_workout || null;
+        },
+
+        get readiness() {
+            return this.context.readiness || {};
+        },
+
+        messageClass(role) {
+            return role === "user"
+                ? "ml-8 border-accent/30 bg-accent/10 text-white"
+                : "mr-8 border-white/10 bg-white/[0.04] text-slate-200";
+        },
+
+        usePrompt(prompt) {
+            this.draft = prompt;
+            this.send();
+        },
+
+        async send() {
+            const message = this.draft.trim();
+            if (!message || this.sending) return;
+            this.messages.push({ role: "user", content: message });
+            this.draft = "";
+            this.sending = true;
+            this.errorMessage = "";
+            try {
+                const data = await requestJson("/api/coach/chat", {
+                    method: "POST",
+                    body: JSON.stringify({ message }),
+                });
+                this.messages.push({ role: "assistant", content: data.reply });
+                this.context = data.context || this.context;
+                window.requestAnimationFrame(() => {
+                    document.getElementById("coach-chat-bottom")?.scrollIntoView({
+                        behavior: "smooth",
+                        block: "end",
+                    });
+                });
+            } catch (error) {
+                this.errorMessage = error.message;
+            } finally {
+                this.sending = false;
+            }
+        },
+    };
+}
+
 function exerciseLibraryView(initialModel) {
     return {
         model: deepCopy(initialModel),
@@ -298,6 +379,52 @@ function exerciseLibraryView(initialModel) {
             );
         },
 
+        preferenceLabel(exercise) {
+            if (exercise?.preference_status === "preferred") return "Preferred";
+            if (exercise?.preference_status === "avoid") return "Unavailable";
+            return "Available";
+        },
+
+        preferenceClass(exercise) {
+            if (exercise?.preference_status === "preferred") {
+                return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
+            }
+            if (exercise?.preference_status === "avoid") {
+                return "border-rose-500/30 bg-rose-500/10 text-rose-300";
+            }
+            return "border-white/10 bg-white/5 text-slate-300";
+        },
+
+        applyPreference(preference) {
+            this.model.exercises = this.exercises.map((exercise) => {
+                if (exercise.id !== preference.exercise_id) return exercise;
+                return {
+                    ...exercise,
+                    preference_status: preference.status,
+                    preference_note: preference.notes,
+                    is_available: preference.status !== "avoid",
+                };
+            });
+        },
+
+        async setPreference(exercise, status) {
+            if (!exercise) return;
+            const data = await requestJson(
+                `/api/exercise-preferences/${encodeURIComponent(exercise.id)}`,
+                {
+                    method: "POST",
+                    body: JSON.stringify({
+                        status,
+                        notes:
+                            status === "avoid"
+                                ? "Marked unavailable from the exercise library."
+                                : "",
+                    }),
+                }
+            );
+            this.applyPreference(data.preference);
+        },
+
         selectExercise(exercise) {
             this.selectedExerciseId = exercise.id;
             window.requestAnimationFrame(() => {
@@ -325,9 +452,12 @@ function workoutSession(initialModel) {
         exerciseLibrary: deepCopy(initialModel.exercise_library || []),
         initialDoneExerciseIds: deepCopy(initialModel.initial_done_exercise_ids || []),
         initialCurrentExerciseId: initialModel.initial_current_exercise_id || null,
+        smartContext: deepCopy(initialModel.smart_context || {}),
         readiness: deepCopy(initialModel.readiness || {}),
         profile: deepCopy(initialModel.profile || {}),
         latestSession: initialModel.latest_session || null,
+        weeklyCategorySets: deepCopy(initialModel.smart_context?.weekly_category_sets || {}),
+        sessionUnavailableIds: [],
         stage: "strength",
         exerciseIdx: 0,
         setIdx: 0,
@@ -367,12 +497,20 @@ function workoutSession(initialModel) {
             completed: false,
         },
 
+        buildDraftKey() {
+            if (!this.workout.smart_mode) {
+                return `${IRONLOG_KEYS.sessionDraftPrefix}${this.workout.id}`;
+            }
+            const startKey = this.initialCurrentExerciseId || "open";
+            return `${IRONLOG_KEYS.sessionDraftPrefix}${this.workout.id}.${startKey}`;
+        },
+
         init() {
             this.week = ironlogWeek();
             this.sessionId =
                 (window.crypto && window.crypto.randomUUID && window.crypto.randomUUID()) ||
                 `session-${Date.now()}`;
-            this.draftKey = `${IRONLOG_KEYS.sessionDraftPrefix}${this.workout.id}`;
+            this.draftKey = this.buildDraftKey();
             this.exerciseStates = this.workout.exercises.map((exercise) =>
                 this.buildExerciseState(exercise)
             );
@@ -388,7 +526,7 @@ function workoutSession(initialModel) {
             }
 
             this.librarySelectedId =
-                this.currentExercise.id || this.exerciseLibrary[0]?.id || "";
+                this.currentExercise.id || this.availableExerciseLibrary[0]?.id || "";
 
             this.elapsedInterval = setInterval(() => {
                 this.elapsed = Math.floor((Date.now() - this.startTime) / 1000);
@@ -626,6 +764,7 @@ function workoutSession(initialModel) {
                 restDuration: this.restDuration,
                 imageFailed: this.imageFailed,
                 exerciseStates: this.exerciseStates,
+                sessionUnavailableIds: this.sessionUnavailableIds,
             });
         },
 
@@ -639,6 +778,7 @@ function workoutSession(initialModel) {
             this.restDuration = snapshot.restDuration;
             this.imageFailed = snapshot.imageFailed;
             this.exerciseStates = deepCopy(snapshot.exerciseStates);
+            this.sessionUnavailableIds = deepCopy(snapshot.sessionUnavailableIds || []);
             if (this.resting && this.restRemaining > 0) {
                 this.startRest(this.restRemaining);
             }
@@ -718,8 +858,101 @@ function workoutSession(initialModel) {
             return formatWeight(exercise || {}, suggestion.suggestedWeight || 0);
         },
 
+        get availableExerciseLibrary() {
+            return this.exerciseLibrary.filter(
+                (exercise) =>
+                    exercise.preference_status !== "avoid" &&
+                    exercise.is_available !== false &&
+                    !this.sessionUnavailableIds.includes(exercise.id)
+            );
+        },
+
         findLibraryExercise(exerciseId) {
             return this.exerciseLibrary.find((exercise) => exercise.id === exerciseId) || null;
+        },
+
+        applyLibraryPreference(preference) {
+            this.exerciseLibrary = this.exerciseLibrary.map((exercise) => {
+                if (exercise.id !== preference.exercise_id) return exercise;
+                return {
+                    ...exercise,
+                    preference_status: preference.status,
+                    preference_note: preference.notes,
+                    is_available: preference.status !== "avoid",
+                };
+            });
+            this.workout.exercises = this.workout.exercises.map((exercise) => {
+                if (exercise.id !== preference.exercise_id) return exercise;
+                return {
+                    ...exercise,
+                    preference_status: preference.status,
+                    preference_note: preference.notes,
+                    is_available: preference.status !== "avoid",
+                };
+            });
+        },
+
+        async markExerciseUnavailable(exerciseId) {
+            const exercise = this.findLibraryExercise(exerciseId) || this.currentExercise;
+            if (!exercise?.id) return;
+            const data = await requestJson(
+                `/api/exercise-preferences/${encodeURIComponent(exercise.id)}`,
+                {
+                    method: "POST",
+                    body: JSON.stringify({
+                        status: "avoid",
+                        notes: "Marked unavailable during a smart session.",
+                    }),
+                }
+            );
+            this.applyLibraryPreference(data.preference);
+            this.smartMessage = `${exercise.name} is now marked unavailable and will be left out of smart suggestions.`;
+            if (
+                this.workout.smart_mode &&
+                exercise.id === this.currentExercise.id &&
+                !this.isExerciseComplete(this.exerciseIdx)
+            ) {
+                this.currentExerciseState.skippedSets = safeNumber(this.currentExercise.sets, 0);
+                this.queueSmartRecommendations(this.currentExercise, 3);
+                this.advance();
+            }
+            this.persistDraft();
+        },
+
+        markExerciseBusy(exerciseId) {
+            const exercise = this.findLibraryExercise(exerciseId) || this.currentExercise;
+            if (!exercise?.id || this.sessionUnavailableIds.includes(exercise.id)) return;
+            this.historyStack.push(this.snapshotState());
+            this.sessionUnavailableIds.push(exercise.id);
+            const busyIndex = this.workout.exercises.findIndex((item) => item.id === exercise.id);
+            const wasCurrent = busyIndex === this.exerciseIdx;
+            if (busyIndex !== -1 && !this.isExerciseComplete(busyIndex)) {
+                const state = this.exerciseStates[busyIndex];
+                state.skippedSets = Math.max(
+                    safeNumber(state.skippedSets, 0),
+                    safeNumber(this.workout.exercises[busyIndex].sets, 0) -
+                        safeNumber(state.completedSets, 0)
+                );
+                state.recommendationReason = "Station was busy, so smart mode routed around it for this session.";
+            }
+            this.librarySelectedId =
+                this.availableExerciseLibrary[0]?.id || this.currentExercise.id || "";
+
+            const basis = this.lastCompletedExercise() || this.currentExercise;
+            const next = this.buildSmartRecommendations(basis, 1)[0];
+            if (next && (wasCurrent || this.currentExerciseDone)) {
+                const nextIndex = this.ensureExerciseInWorkout(next);
+                this.exerciseIdx = nextIndex;
+                this.setIdx = this.nextSetIndexForExercise(nextIndex);
+                this.imageFailed = false;
+                this.librarySelectedId = next.id;
+                this.smartMessage = `${exercise.name} is busy now. Swapped in ${next.name} to keep this week balanced.`;
+            } else if (next) {
+                this.smartMessage = `${exercise.name} is busy now. Next best option is ${next.name}.`;
+            } else {
+                this.smartMessage = `${exercise.name} is busy now. No fresh substitute is available from your current library.`;
+            }
+            this.persistDraft();
         },
 
         get smartSelectedExercise() {
@@ -738,13 +971,32 @@ function workoutSession(initialModel) {
             return this.workout.exercises.length - 1;
         },
 
+        queueSmartRecommendations(after, limit = 5) {
+            if (!this.workout.smart_mode) return [];
+            const queued = [];
+            let basis = after;
+            while (queued.length < limit) {
+                const next = this.buildSmartRecommendations(basis, 1)[0];
+                if (!next || queued.some((exercise) => exercise.id === next.id)) break;
+                this.ensureExerciseInWorkout(next);
+                queued.push(next);
+                basis = next;
+            }
+            return queued;
+        },
+
         startWithExercise(exerciseId) {
             const exercise = this.findLibraryExercise(exerciseId);
-            if (!exercise) return;
+            if (!exercise || exercise.preference_status === "avoid" || exercise.is_available === false) return;
+            this.historyStack.push(this.snapshotState());
             const index = this.ensureExerciseInWorkout(exercise);
             this.selectExercise(index);
             this.librarySelectedId = exercise.id;
-            this.smartMessage = `Current exercise set to ${exercise.name}.`;
+            const queued = this.queueSmartRecommendations(exercise, 5);
+            this.smartMessage = queued.length
+                ? `Starting with ${exercise.name}. I queued ${queued.length} follow-up moves around it.`
+                : `Current exercise set to ${exercise.name}.`;
+            this.persistDraft();
         },
 
         logExerciseDone(exerciseId) {
@@ -764,7 +1016,8 @@ function workoutSession(initialModel) {
             this.resting = false;
             clearInterval(this.restInterval);
 
-            const next = this.buildSmartRecommendations(exercise, 1)[0];
+            const queued = this.queueSmartRecommendations(exercise, 5);
+            const next = queued[0];
             if (next) {
                 const nextIndex = this.ensureExerciseInWorkout(next);
                 this.exerciseIdx = nextIndex;
@@ -780,6 +1033,8 @@ function workoutSession(initialModel) {
 
         recommendationScore(after, candidate, index) {
             if (!after || !candidate || candidate.id === after.id) return -1;
+            if (candidate.preference_status === "avoid" || candidate.is_available === false) return -1;
+            if (this.sessionUnavailableIds.includes(candidate.id)) return -1;
             const completedIds = new Set(
                 this.workout.exercises
                     .map((exercise, exerciseIndex) =>
@@ -805,16 +1060,63 @@ function workoutSession(initialModel) {
             }
             if (candidate.movement_pattern !== after.movement_pattern) score += 8;
             if (["push", "pull", "shoulders", "arms"].includes(candidate.category)) score += 6;
+            if (candidate.preference_status === "preferred") score += 26;
+            score += this.categoryBalanceBonus(candidate.category);
+            const daysSince = daysSinceIso(candidate.last_completed_at);
+            if (daysSince === null) {
+                score += 5;
+            } else if (daysSince <= 1) {
+                score -= 70;
+            } else if (daysSince <= 3) {
+                score -= 24;
+            } else if (daysSince <= 6) {
+                score -= 8;
+            } else {
+                score += Math.min(10, Math.floor(daysSince / 4));
+            }
             score += Math.max(0, 6 - safeNumber(candidate.category_rank, 0));
             score += Math.min(4, safeNumber(candidate.sets, 0));
             score -= index * 0.01;
             return score;
         },
 
+        liveCategorySets() {
+            const totals = { ...(this.weeklyCategorySets || {}) };
+            this.workout.exercises.forEach((exercise, index) => {
+                const category = exercise.category;
+                if (!category) return;
+                totals[category] =
+                    safeNumber(totals[category], 0) +
+                    safeNumber(this.exerciseStates[index]?.completedSets, 0);
+            });
+            return totals;
+        },
+
+        categoryBalanceBonus(category) {
+            const totals = this.liveCategorySets();
+            const categories = ["push", "pull", "shoulders", "arms", "posterior-chain", "core-calves"];
+            if (!categories.includes(category)) return 0;
+            const values = categories.map((item) => safeNumber(totals[item], 0));
+            const maxSets = Math.max(...values);
+            const minSets = Math.min(...values);
+            if (maxSets === minSets) return 0;
+            return (maxSets - safeNumber(totals[category], 0)) * 7;
+        },
+
+        lastCompletedExercise() {
+            for (let index = this.workout.exercises.length - 1; index >= 0; index -= 1) {
+                if (index === this.exerciseIdx) continue;
+                if (safeNumber(this.exerciseStates[index]?.completedSets, 0) > 0) {
+                    return this.workout.exercises[index];
+                }
+            }
+            return null;
+        },
+
         buildSmartRecommendations(after, limit = 6) {
-            if (!this.exerciseLibrary.length) return [];
+            if (!this.availableExerciseLibrary.length) return [];
             const basis = after || this.currentExercise;
-            return this.exerciseLibrary
+            return this.availableExerciseLibrary
                 .map((candidate, index) => ({
                     exercise: candidate,
                     score: this.recommendationScore(basis, candidate, index),
@@ -871,6 +1173,9 @@ function workoutSession(initialModel) {
             if (total === 0) return -1;
             for (let offset = 0; offset < total; offset += 1) {
                 const index = (startIndex + offset + total) % total;
+                if (this.sessionUnavailableIds.includes(this.workout.exercises[index]?.id)) {
+                    continue;
+                }
                 if (!this.isExerciseComplete(index)) {
                     return index;
                 }
@@ -1033,6 +1338,7 @@ function workoutSession(initialModel) {
             }
             this.exerciseIdx = nextIndex;
             this.setIdx = this.nextSetIndexForExercise(nextIndex);
+            this.librarySelectedId = this.currentExercise.id || this.librarySelectedId;
             this.imageFailed = false;
         },
 
@@ -1074,6 +1380,8 @@ function workoutSession(initialModel) {
                 sessionNote: this.sessionNote,
                 sessionFeeling: this.sessionFeeling,
                 exerciseStates: this.exerciseStates,
+                workoutExercises: this.workout.smart_mode ? this.workout.exercises : null,
+                sessionUnavailableIds: this.sessionUnavailableIds,
                 historyStack: this.historyStack,
                 walk: this.walk,
                 savedAt: new Date().toISOString(),
@@ -1088,9 +1396,16 @@ function workoutSession(initialModel) {
 
             try {
                 const draft = JSON.parse(raw);
+                const draftExercises =
+                    this.workout.smart_mode && Array.isArray(draft.workoutExercises)
+                        ? draft.workoutExercises
+                        : null;
+                const expectedExerciseCount = draftExercises
+                    ? draftExercises.length
+                    : this.workout.exercises.length;
                 if (
                     Array.isArray(draft.exerciseStates) &&
-                    draft.exerciseStates.length !== this.workout.exercises.length
+                    draft.exerciseStates.length !== expectedExerciseCount
                 ) {
                     localStorage.removeItem(this.draftKey);
                     return false;
@@ -1103,6 +1418,9 @@ function workoutSession(initialModel) {
                     return false;
                 }
 
+                if (draftExercises) {
+                    this.workout.exercises = draftExercises;
+                }
                 this.stage = draft.stage || "strength";
                 if (this.stage === "warmup" && !this.hasTimedWalk(this.workout.warmup)) {
                     this.stage = "strength";
@@ -1125,6 +1443,7 @@ function workoutSession(initialModel) {
                 this.sessionNote = draft.sessionNote || "";
                 this.sessionFeeling = safeNumber(draft.sessionFeeling, 0);
                 this.exerciseStates = draft.exerciseStates || this.exerciseStates;
+                this.sessionUnavailableIds = draft.sessionUnavailableIds || [];
                 this.historyStack = draft.historyStack || [];
                 this.walk = draft.walk || this.walk;
                 this.restoredDraft = true;

@@ -1,10 +1,12 @@
 import json
 import os
 import re
-import sqlite3
 import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
+
+from pymongo import MongoClient
+from openai import OpenAI
 
 from flask import Flask, abort, g, jsonify, render_template, request
 
@@ -18,6 +20,19 @@ DEFAULT_PROFILE = {
     "focus_area": "45-minute upper-body progression with no squat variations.",
     "preferred_session_minutes": 45,
 }
+
+DEFAULT_EXERCISE_PREFERENCES = {
+    "machine-shoulder-press": {
+        "status": "preferred",
+        "notes": "Preferred shoulder press option when the machine is free.",
+    },
+    "cable-rope-rear-delt-row": {
+        "status": "avoid",
+        "notes": "Unavailable for you: seated rope-pull setup.",
+    },
+}
+
+VALID_PREFERENCE_STATUSES = {"neutral", "preferred", "avoid"}
 
 app = Flask(__name__)
 
@@ -56,6 +71,7 @@ CATEGORY_META = [
 
 CATEGORY_LABELS = {category["id"]: category["label"] for category in CATEGORY_META}
 CATEGORY_RANKS = {category["id"]: index for index, category in enumerate(CATEGORY_META)}
+BALANCED_CATEGORY_IDS = [category["id"] for category in CATEGORY_META]
 SMART_WORKOUT_ID = "smart-session"
 
 
@@ -150,26 +166,33 @@ def format_exercise_weight(exercise, weight=None):
 
 
 def classify_exercise(exercise):
-    text = f"{exercise.get('id', '')} {exercise.get('name', '')} {exercise.get('muscle_focus', '')}".lower()
+    name_text = f"{exercise.get('id', '')} {exercise.get('name', '')}".lower()
+    full_text = f"{name_text} {exercise.get('muscle_focus', '')}".lower()
 
-    if any(token in text for token in ["calf", "knee raise", "hanging", "core"]):
+    if any(token in name_text for token in ["calf", "knee raise", "hanging", "core"]):
         category_id = "core-calves"
         pattern = "core-calves"
-    elif any(token in text for token in ["deadlift", "hip thrust", "leg curl", "hamstring", "glute"]):
+    elif any(token in name_text for token in ["deadlift", "hip thrust", "leg curl", "hamstring", "glute"]):
         category_id = "posterior-chain"
         pattern = "hinge"
-    elif any(token in text for token in ["shoulder", "lateral", "arnold", "rear delt", "face pull"]):
+    elif any(token in name_text for token in ["shoulder", "lateral", "arnold", "rear delt", "face pull"]):
         category_id = "shoulders"
         pattern = "shoulder"
-    elif any(token in text for token in ["curl", "tricep", "triceps", "skullcrusher", "extension"]):
-        category_id = "arms"
-        pattern = "arm isolation"
-    elif any(token in text for token in ["pull-up", "pull up", "pulldown", "row", "lat"]):
+    elif any(token in name_text for token in ["pull-up", "pull up", "pulldown", "row", "lat"]):
         category_id = "pull"
         pattern = "pull"
-    elif any(token in text for token in ["bench", "chest", "fly", "dip", "press"]):
+    elif any(token in name_text for token in ["curl", "tricep", "triceps", "skullcrusher", "extension", "pushdown"]):
+        category_id = "arms"
+        pattern = "arm isolation"
+    elif any(token in name_text for token in ["bench", "chest", "fly", "dip", "press"]):
         category_id = "push"
         pattern = "press"
+    elif any(token in full_text for token in ["lat", "mid-back", "upper back"]):
+        category_id = "pull"
+        pattern = "pull"
+    elif any(token in full_text for token in ["tricep", "triceps", "biceps", "forearms"]):
+        category_id = "arms"
+        pattern = "arm isolation"
     else:
         category_id = "push"
         pattern = "general"
@@ -182,115 +205,67 @@ def classify_exercise(exercise):
     }
 
 
-def get_database_path():
-    configured = os.environ.get("DATABASE_PATH")
-    if configured:
-        return Path(configured)
-    return BASE_DIR / "instance" / "ironlog.db"
+def infer_equipment(exercise):
+    text = f"{exercise.get('id', '')} {exercise.get('name', '')}".lower()
+    if "machine" in text or "pec deck" in text:
+        return "Machine"
+    if "cable" in text or "rope" in text or "pulldown" in text:
+        return "Cable"
+    if "dumbbell" in text or "db" in text or "arnold" in text:
+        return "Dumbbell"
+    if "barbell" in text or "ez-bar" in text or "ez-" in text:
+        return "Barbell"
+    if "pull-up" in text or "dip" in text or "bodyweight" in text:
+        return "Bodyweight"
+    return "Gym"
 
 
-def ensure_runtime_dirs():
-    db_path = get_database_path()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    return db_path
+mongo_client = None
 
 
 def get_db():
-    if "db" not in g:
-        db_path = ensure_runtime_dirs()
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        init_db(conn)
-        g.db = conn
-    return g.db
+    global mongo_client
+    if mongo_client is None:
+        uri = os.environ.get("MONGODB_URI")
+        if not uri:
+            uri = "mongodb://localhost:27017/"
+        mongo_client = MongoClient(uri)
+    return mongo_client.ironlog
 
 
-@app.teardown_appcontext
-def close_db(_exception):
-    db = g.pop("db", None)
-    if db is not None:
-        db.close()
+def get_openai_client():
+    if "openai" not in g:
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        g.openai = OpenAI(api_key=api_key)
+    return g.openai
 
 
-def init_db(conn):
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS profile (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            name TEXT NOT NULL DEFAULT '',
-            training_goal TEXT NOT NULL DEFAULT '',
-            focus_area TEXT NOT NULL DEFAULT '',
-            preferred_session_minutes INTEGER NOT NULL DEFAULT 45,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
+def init_db():
+    db = get_db()
+    if db.profile.count_documents({"_id": 1}) == 0:
+        db.profile.insert_one({
+            "_id": 1,
+            "name": DEFAULT_PROFILE["name"],
+            "training_goal": DEFAULT_PROFILE["training_goal"],
+            "focus_area": DEFAULT_PROFILE["focus_area"],
+            "preferred_session_minutes": DEFAULT_PROFILE["preferred_session_minutes"],
+            "updated_at": now_iso()
+        })
+    for exercise_id, preference in DEFAULT_EXERCISE_PREFERENCES.items():
+        if db.exercise_preferences.count_documents({"_id": exercise_id}) == 0:
+            db.exercise_preferences.insert_one({
+                "_id": exercise_id,
+                "status": preference["status"],
+                "notes": preference.get("notes", ""),
+                "updated_at": now_iso()
+            })
 
-        CREATE TABLE IF NOT EXISTS daily_checkins (
-            checkin_date TEXT PRIMARY KEY,
-            energy INTEGER NOT NULL,
-            sleep INTEGER NOT NULL,
-            soreness INTEGER NOT NULL,
-            stress INTEGER NOT NULL,
-            motivation INTEGER NOT NULL,
-            bodyweight_kg REAL,
-            step_count INTEGER,
-            notes TEXT NOT NULL DEFAULT '',
-            readiness_score INTEGER NOT NULL,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
 
-        CREATE TABLE IF NOT EXISTS sessions (
-            id TEXT PRIMARY KEY,
-            workout_id TEXT NOT NULL,
-            workout_name TEXT NOT NULL,
-            week INTEGER NOT NULL,
-            started_at TEXT NOT NULL,
-            completed_at TEXT NOT NULL,
-            duration_seconds INTEGER NOT NULL DEFAULT 0,
-            warmup_seconds INTEGER NOT NULL DEFAULT 0,
-            cooldown_seconds INTEGER NOT NULL DEFAULT 0,
-            completed_sets INTEGER NOT NULL DEFAULT 0,
-            skipped_sets INTEGER NOT NULL DEFAULT 0,
-            total_sets INTEGER NOT NULL DEFAULT 0,
-            volume_kg REAL NOT NULL DEFAULT 0,
-            readiness_score INTEGER,
-            energy INTEGER,
-            notes TEXT NOT NULL DEFAULT '',
-            session_feeling INTEGER,
-            achievements_json TEXT NOT NULL DEFAULT '[]',
-            exercise_logs_json TEXT NOT NULL DEFAULT '[]'
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_sessions_completed_at
-            ON sessions (completed_at DESC);
-
-        CREATE INDEX IF NOT EXISTS idx_sessions_workout_completed
-            ON sessions (workout_id, completed_at DESC);
-        """
-    )
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO profile (
-            id, name, training_goal, focus_area, preferred_session_minutes
-        ) VALUES (?, ?, ?, ?, ?)
-        """,
-        (
-            1,
-            DEFAULT_PROFILE["name"],
-            DEFAULT_PROFILE["training_goal"],
-            DEFAULT_PROFILE["focus_area"],
-            DEFAULT_PROFILE["preferred_session_minutes"],
-        ),
-    )
-    conn.execute(
-        """
-        UPDATE profile
-        SET preferred_session_minutes = ?
-        WHERE id = 1 AND preferred_session_minutes = 90
-        """,
-        (DEFAULT_PROFILE["preferred_session_minutes"],),
-    )
-    conn.commit()
+@app.before_request
+def initialize():
+    if not getattr(app, "db_initialized", False):
+        init_db()
+        app.db_initialized = True
 
 
 def load_data():
@@ -314,9 +289,11 @@ def load_program():
     data = load_data()
     defaults = data.get("defaults", {})
     workouts = [with_defaults(workout, defaults) for workout in data.get("workouts", [])]
+    exercise_pool = [dict(exercise) for exercise in data.get("exercise_pool", [])]
     return {
         "image_base": data.get("image_base", DEFAULT_IMAGE_BASE),
         "defaults": defaults,
+        "exercise_pool": exercise_pool,
         "workouts": workouts,
     }
 
@@ -330,7 +307,8 @@ def find_workout(workout_id):
 
 
 def get_profile():
-    row = get_db().execute("SELECT * FROM profile WHERE id = 1").fetchone()
+    db = get_db()
+    row = db.profile.find_one({"_id": 1})
     if row is None:
         return dict(DEFAULT_PROFILE)
     profile = dict(row)
@@ -358,25 +336,49 @@ def save_profile(payload):
             minimum=30,
             maximum=180,
         ),
+        "updated_at": now_iso()
     }
     db = get_db()
-    db.execute(
-        """
-        UPDATE profile
-        SET name = ?, training_goal = ?, focus_area = ?,
-            preferred_session_minutes = ?, updated_at = ?
-        WHERE id = 1
-        """,
-        (
-            profile["name"],
-            profile["training_goal"],
-            profile["focus_area"],
-            profile["preferred_session_minutes"],
-            now_iso(),
-        ),
-    )
-    db.commit()
+    db.profile.update_one({"_id": 1}, {"$set": profile}, upsert=True)
     return get_profile()
+
+
+def normalize_preference_status(value):
+    status = str(value or "neutral").strip().lower()
+    return status if status in VALID_PREFERENCE_STATUSES else "neutral"
+
+
+def get_exercise_preferences():
+    db = get_db()
+    rows = db.exercise_preferences.find()
+    return {
+        row["_id"]: {
+            "exercise_id": row["_id"],
+            "status": normalize_preference_status(row.get("status")),
+            "notes": row.get("notes", ""),
+            "updated_at": row.get("updated_at"),
+        }
+        for row in rows
+    }
+
+
+def save_exercise_preference(exercise_id, payload):
+    preference = {
+        "status": normalize_preference_status(payload.get("status")),
+        "notes": clamp_text(payload.get("notes"), "", 180),
+        "updated_at": now_iso(),
+    }
+    if not exercise_id:
+        abort(400)
+
+    db = get_db()
+    db.exercise_preferences.update_one(
+        {"_id": exercise_id},
+        {"$set": preference},
+        upsert=True
+    )
+    preference["exercise_id"] = exercise_id
+    return preference
 
 
 def compute_readiness_score(payload):
@@ -445,15 +447,16 @@ def build_readiness_state(checkin):
 
 
 def get_today_checkin():
-    row = get_db().execute(
-        "SELECT * FROM daily_checkins WHERE checkin_date = ?", (today_iso(),)
-    ).fetchone()
-    return dict(row) if row else None
+    db = get_db()
+    row = db.daily_checkins.find_one({"_id": today_iso()})
+    if row:
+        row["checkin_date"] = row["_id"]
+        return row
+    return None
 
 
 def save_today_checkin(payload):
     checkin = {
-        "checkin_date": today_iso(),
         "energy": safe_int(payload.get("energy"), 3, minimum=1, maximum=5),
         "sleep": safe_int(payload.get("sleep"), 3, minimum=1, maximum=5),
         "soreness": safe_int(payload.get("soreness"), 3, minimum=1, maximum=5),
@@ -462,62 +465,36 @@ def save_today_checkin(payload):
         "bodyweight_kg": safe_float(payload.get("bodyweight_kg"), default=None, minimum=0),
         "step_count": safe_int(payload.get("step_count"), default=0, minimum=0),
         "notes": clamp_text(payload.get("notes"), "", 280),
+        "updated_at": now_iso(),
     }
     if checkin["step_count"] == 0:
         checkin["step_count"] = None
     checkin["readiness_score"] = compute_readiness_score(checkin)
+    
     db = get_db()
-    db.execute(
-        """
-        INSERT INTO daily_checkins (
-            checkin_date, energy, sleep, soreness, stress, motivation,
-            bodyweight_kg, step_count, notes, readiness_score, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(checkin_date) DO UPDATE SET
-            energy = excluded.energy,
-            sleep = excluded.sleep,
-            soreness = excluded.soreness,
-            stress = excluded.stress,
-            motivation = excluded.motivation,
-            bodyweight_kg = excluded.bodyweight_kg,
-            step_count = excluded.step_count,
-            notes = excluded.notes,
-            readiness_score = excluded.readiness_score,
-            updated_at = excluded.updated_at
-        """,
-        (
-            checkin["checkin_date"],
-            checkin["energy"],
-            checkin["sleep"],
-            checkin["soreness"],
-            checkin["stress"],
-            checkin["motivation"],
-            checkin["bodyweight_kg"],
-            checkin["step_count"],
-            checkin["notes"],
-            checkin["readiness_score"],
-            now_iso(),
-            now_iso(),
-        ),
+    db.daily_checkins.update_one(
+        {"_id": today_iso()},
+        {
+            "$set": checkin,
+            "$setOnInsert": {"created_at": now_iso()}
+        },
+        upsert=True
     )
-    db.commit()
     return get_today_checkin()
 
 
 def list_sessions(limit=12):
-    rows = get_db().execute(
-        "SELECT * FROM sessions ORDER BY completed_at DESC LIMIT ?",
-        (limit,),
-    ).fetchall()
-    return [dict(row) for row in rows]
+    db = get_db()
+    cursor = db.sessions.find().sort("completed_at", -1).limit(limit)
+    return list(cursor)
 
 
 def load_session_logs(row):
-    return json.loads(row.get("exercise_logs_json") or "[]")
+    return row.get("exercise_logs") or []
 
 
 def load_session_achievements(row):
-    return json.loads(row.get("achievements_json") or "[]")
+    return row.get("achievements") or []
 
 
 def summarize_session(row):
@@ -700,26 +677,18 @@ def build_dashboard(program):
             next_workout = card
 
     db = get_db()
-    total_sessions = safe_int(
-        db.execute("SELECT COUNT(*) AS total FROM sessions").fetchone()["total"],
-        0,
-        minimum=0,
-    )
+    total_sessions = db.sessions.count_documents({})
     last_7_days = (date.today() - timedelta(days=6)).isoformat()
     last_30_days = (date.today() - timedelta(days=29)).isoformat()
-    sessions_last_7_days = safe_int(
-        db.execute(
-            "SELECT COUNT(*) AS total FROM sessions WHERE substr(completed_at, 1, 10) >= ?",
-            (last_7_days,),
-        ).fetchone()["total"],
-        0,
-        minimum=0,
-    )
+    sessions_last_7_days = db.sessions.count_documents({"completed_at": {"$gte": last_7_days}})
+    
+    pipeline = [
+        {"$match": {"completed_at": {"$gte": last_30_days}}},
+        {"$group": {"_id": None, "total": {"$sum": "$volume_kg"}}}
+    ]
+    vol_res = list(db.sessions.aggregate(pipeline))
     volume_last_30_days = safe_float(
-        db.execute(
-            "SELECT COALESCE(SUM(volume_kg), 0) AS total FROM sessions WHERE substr(completed_at, 1, 10) >= ?",
-            (last_30_days,),
-        ).fetchone()["total"],
+        vol_res[0]["total"] if vol_res else 0.0,
         default=0.0,
         minimum=0,
     )
@@ -733,6 +702,8 @@ def build_dashboard(program):
         "last_session_label": last_session["completed_at_label"] if last_session else "No sessions yet",
     }
 
+    smart_context = build_smart_context(build_exercise_library(program))
+
     return {
         "profile": profile,
         "today_checkin": today_checkin,
@@ -740,6 +711,7 @@ def build_dashboard(program):
         "workouts": workout_cards,
         "recent_sessions": recent_sessions[:6],
         "stats": stats,
+        "smart_context": smart_context,
         "next_workout": next_workout,
         "coach_note": build_home_coach_note(profile, readiness, next_workout),
     }
@@ -747,15 +719,18 @@ def build_dashboard(program):
 
 def enrich_workout(workout):
     history = collect_workout_history()
-    return enrich_workout_with_history(workout, history)
+    preferences = get_exercise_preferences()
+    return enrich_workout_with_history(workout, history, preferences)
 
 
-def enrich_exercise(exercise, history, source_workout=None):
+def enrich_exercise(exercise, history, source_workout=None, preferences=None):
     latest_by_exercise = history["latest_by_exercise"]
     best_by_exercise = history["best_by_exercise"]
     latest = latest_by_exercise.get(exercise["id"], {})
     best = best_by_exercise.get(exercise["id"], {})
     classification = classify_exercise(exercise)
+    preference = (preferences or {}).get(exercise["id"], {})
+    preference_status = normalize_preference_status(preference.get("status"))
     source = {}
     if source_workout:
         source = {
@@ -767,6 +742,10 @@ def enrich_exercise(exercise, history, source_workout=None):
         **exercise,
         **classification,
         **source,
+        "equipment": exercise.get("equipment") or infer_equipment(exercise),
+        "preference_status": preference_status,
+        "preference_note": preference.get("notes", ""),
+        "is_available": preference_status != "avoid",
         "display_weight_label": format_exercise_weight(exercise),
         "last_logged_weight": latest.get("last_logged_weight"),
         "last_logged_label": latest.get("last_logged_label"),
@@ -783,7 +762,7 @@ def enrich_exercise(exercise, history, source_workout=None):
     }
 
 
-def enrich_workout_with_history(workout, history):
+def enrich_workout_with_history(workout, history, preferences=None):
     latest_workout = history["latest_by_workout"].get(workout["id"])
 
     enriched = {
@@ -792,32 +771,41 @@ def enrich_workout_with_history(workout, history):
         "latest_session": latest_workout,
     }
     for exercise in workout.get("exercises", []):
-        enriched["exercises"].append(enrich_exercise(exercise, history, workout))
+        enriched["exercises"].append(enrich_exercise(exercise, history, workout, preferences))
     return enriched
 
 
 def build_exercise_library(program=None):
     program = program or load_program()
     history = collect_workout_history()
+    preferences = get_exercise_preferences()
     exercises_by_id = {}
+
+    def add_exercise(exercise, source_workout):
+        enriched = enrich_exercise(exercise, history, source_workout, preferences)
+        existing = exercises_by_id.get(enriched["id"])
+        source = {
+            "id": source_workout["id"],
+            "name": source_workout["name"],
+        }
+        if existing:
+            existing.setdefault("source_workouts", []).append(source)
+            return
+        enriched["source_workouts"] = [source]
+        exercises_by_id[enriched["id"]] = enriched
 
     for workout in program["workouts"]:
         for exercise in workout.get("exercises", []):
-            enriched = enrich_exercise(exercise, history, workout)
-            existing = exercises_by_id.get(enriched["id"])
-            source = {
-                "id": workout["id"],
-                "name": workout["name"],
-            }
-            if existing:
-                existing.setdefault("source_workouts", []).append(source)
-                continue
-            enriched["source_workouts"] = [source]
-            exercises_by_id[enriched["id"]] = enriched
+            add_exercise(exercise, workout)
+
+    pool_source = {"id": "exercise-pool", "name": "Exercise Pool"}
+    for exercise in program.get("exercise_pool", []):
+        add_exercise(exercise, pool_source)
 
     return sorted(
         exercises_by_id.values(),
         key=lambda exercise: (
+            1 if exercise.get("preference_status") == "avoid" else 0,
             safe_int(exercise.get("category_rank"), 99),
             exercise.get("name", ""),
         ),
@@ -837,8 +825,69 @@ def group_exercises_by_category(exercises):
     return groups
 
 
-def recommendation_score(after, candidate, done_ids=None):
+def days_since_iso(iso_string):
+    if not iso_string:
+        return None
+    try:
+        completed_at = datetime.fromisoformat(str(iso_string).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    now = datetime.now(completed_at.tzinfo) if completed_at.tzinfo else datetime.now()
+    return max(0, (now - completed_at).days)
+
+
+def recency_sort_key(exercise):
+    days_since = days_since_iso(exercise.get("last_completed_at"))
+    return -(days_since if days_since is not None else 999)
+
+
+def build_weekly_category_sets(library=None, days=7):
+    library = library or build_exercise_library()
+    exercise_by_id = {exercise["id"]: exercise for exercise in library}
+    start_date = (date.today() - timedelta(days=days - 1)).isoformat()
+    db = get_db()
+    cursor = db.sessions.find({"completed_at": {"$gte": start_date}}).sort("completed_at", -1)
+    
+    sets_by_category = {category_id: 0 for category_id in BALANCED_CATEGORY_IDS}
+
+    for row in cursor:
+        for log in row.get("exercise_logs", []):
+            exercise_id = log.get("exercise_id")
+            exercise = exercise_by_id.get(exercise_id)
+            if not exercise:
+                continue
+            category = exercise.get("category")
+            if category not in sets_by_category:
+                continue
+            sets_by_category[category] += safe_int(
+                log.get("completed_sets"), 0, minimum=0
+            )
+
+    return sets_by_category
+
+
+def category_balance_bonus(category_id, weekly_category_sets=None):
+    weekly_category_sets = weekly_category_sets or {}
+    if category_id not in BALANCED_CATEGORY_IDS:
+        return 0
+    values = [
+        safe_int(weekly_category_sets.get(category), 0, minimum=0)
+        for category in BALANCED_CATEGORY_IDS
+    ]
+    if not values:
+        return 0
+    max_sets = max(values)
+    min_sets = min(values)
+    if max_sets == min_sets:
+        return 0
+    category_sets = safe_int(weekly_category_sets.get(category_id), 0, minimum=0)
+    return (max_sets - category_sets) * 7
+
+
+def recommendation_score(after, candidate, done_ids=None, weekly_category_sets=None):
     done_ids = set(done_ids or [])
+    if candidate.get("preference_status") == "avoid" or not candidate.get("is_available", True):
+        return -1
     if candidate["id"] == after.get("id") or candidate["id"] in done_ids:
         return -1
 
@@ -859,14 +908,39 @@ def recommendation_score(after, candidate, done_ids=None):
         score += 8
     if candidate.get("category") in {"push", "pull", "shoulders", "arms"}:
         score += 6
+    if candidate.get("preference_status") == "preferred":
+        score += 26
+    score += category_balance_bonus(candidate.get("category"), weekly_category_sets)
+
+    days_since = days_since_iso(candidate.get("last_completed_at"))
+    if days_since is None:
+        score += 5
+    elif days_since <= 1:
+        score -= 70
+    elif days_since <= 3:
+        score -= 24
+    elif days_since <= 6:
+        score -= 8
+    else:
+        score += min(10, days_since // 4)
+
     score += max(0, 6 - safe_int(candidate.get("category_rank"), 0))
     score += min(4, safe_int(candidate.get("sets"), 0))
     return score
 
 
-def recommend_exercises(after_id=None, done_ids=None, limit=8):
-    library = build_exercise_library()
+def recommend_exercises(
+    after_id=None,
+    done_ids=None,
+    limit=8,
+    library=None,
+    unavailable_ids=None,
+    weekly_category_sets=None,
+):
+    library = library or build_exercise_library()
     done_ids = set(done_ids or [])
+    unavailable_ids = set(unavailable_ids or [])
+    weekly_category_sets = weekly_category_sets or build_weekly_category_sets(library)
     after = next((exercise for exercise in library if exercise["id"] == after_id), None)
 
     if after is None:
@@ -874,10 +948,16 @@ def recommend_exercises(after_id=None, done_ids=None, limit=8):
             exercise
             for exercise in library
             if exercise["id"] not in done_ids
+            and exercise["id"] not in unavailable_ids
+            and exercise.get("preference_status") != "avoid"
+            and exercise.get("is_available", True)
             and exercise.get("category") in {"push", "pull", "shoulders", "arms"}
         ]
         candidates.sort(
             key=lambda exercise: (
+                0 if exercise.get("preference_status") == "preferred" else 1,
+                -category_balance_bonus(exercise.get("category"), weekly_category_sets),
+                recency_sort_key(exercise),
                 safe_int(exercise.get("category_rank"), 99),
                 -safe_int(exercise.get("sets"), 0),
                 exercise.get("name", ""),
@@ -887,7 +967,9 @@ def recommend_exercises(after_id=None, done_ids=None, limit=8):
 
     scored = []
     for candidate in library:
-        score = recommendation_score(after, candidate, done_ids)
+        if candidate["id"] in unavailable_ids:
+            continue
+        score = recommendation_score(after, candidate, done_ids, weekly_category_sets)
         if score >= 0:
             scored.append((score, candidate))
 
@@ -902,6 +984,101 @@ def recommend_exercises(after_id=None, done_ids=None, limit=8):
         "after": after,
         "recommendations": [candidate for _score, candidate in scored[:limit]],
     }
+
+
+def latest_session_exercise_logs():
+    db = get_db()
+    row = db.sessions.find_one(sort=[("completed_at", -1)])
+    if row is None:
+        return None, []
+    return summarize_session(row), load_session_logs(row)
+
+
+def build_smart_context(library):
+    latest_session, logs = latest_session_exercise_logs()
+    preferences = get_exercise_preferences()
+    weekly_category_sets = build_weekly_category_sets(library)
+    preferred = [
+        exercise
+        for exercise in library
+        if exercise.get("preference_status") == "preferred"
+    ]
+    avoided = [
+        exercise
+        for exercise in library
+        if exercise.get("preference_status") == "avoid"
+    ]
+
+    return {
+        "latest_session": latest_session,
+        "latest_exercises": [
+            {
+                "id": log.get("exercise_id"),
+                "name": log.get("exercise_name"),
+            }
+            for log in logs
+            if log.get("exercise_id")
+        ][:8],
+        "available_count": len([exercise for exercise in library if exercise.get("is_available", True)]),
+        "preferred_count": len(preferred),
+        "avoided_count": len(avoided),
+        "preferred_names": [exercise["name"] for exercise in preferred[:4]],
+        "avoided_names": [exercise["name"] for exercise in avoided[:4]],
+        "preference_count": len(preferences),
+        "weekly_category_sets": weekly_category_sets,
+        "weekly_balance": [
+            {
+                "id": category["id"],
+                "label": category["label"],
+                "sets": weekly_category_sets.get(category["id"], 0),
+            }
+            for category in CATEGORY_META
+        ],
+    }
+
+
+def build_smart_queue(
+    library,
+    start_exercise=None,
+    done_ids=None,
+    limit=6,
+    basis_exercise=None,
+    unavailable_ids=None,
+    weekly_category_sets=None,
+):
+    done_ids = set(done_ids or [])
+    unavailable_ids = set(unavailable_ids or [])
+    weekly_category_sets = weekly_category_sets or build_weekly_category_sets(library)
+    exercises = []
+    queued_ids = set()
+
+    if (
+        start_exercise
+        and start_exercise.get("preference_status") != "avoid"
+        and start_exercise["id"] not in unavailable_ids
+    ):
+        exercises.append(start_exercise)
+        queued_ids.add(start_exercise["id"])
+
+    basis = start_exercise or basis_exercise
+    while len(exercises) < limit:
+        excluded = done_ids | queued_ids
+        recommendations = recommend_exercises(
+            after_id=basis["id"] if basis else None,
+            done_ids=excluded,
+            limit=12,
+            library=library,
+            unavailable_ids=unavailable_ids,
+            weekly_category_sets=weekly_category_sets,
+        )["recommendations"]
+        next_exercise = recommendations[0] if recommendations else None
+        if not next_exercise:
+            break
+        exercises.append(next_exercise)
+        queued_ids.add(next_exercise["id"])
+        basis = next_exercise
+
+    return exercises
 
 
 def build_workout_page_model(workout_id):
@@ -943,6 +1120,7 @@ def build_smart_workout_page_model(start_id=None, done_id=None):
     readiness = build_readiness_state(today_checkin)
     library = build_exercise_library(program)
     exercise_by_id = {exercise["id"]: exercise for exercise in library}
+    weekly_category_sets = build_weekly_category_sets(library)
 
     start_exercise = exercise_by_id.get(start_id) if start_id else None
     done_exercise = exercise_by_id.get(done_id) if done_id else None
@@ -950,6 +1128,8 @@ def build_smart_workout_page_model(start_id=None, done_id=None):
         return None
     if done_id and done_exercise is None:
         return None
+    if start_exercise and start_exercise.get("preference_status") == "avoid":
+        start_exercise = None
 
     done_ids = [done_exercise["id"]] if done_exercise else []
     basis = start_exercise or done_exercise
@@ -957,21 +1137,30 @@ def build_smart_workout_page_model(start_id=None, done_id=None):
         after_id=basis["id"] if basis else None,
         done_ids=done_ids,
         limit=7,
+        library=library,
+        weekly_category_sets=weekly_category_sets,
     )["recommendations"]
 
     exercises = []
     if done_exercise:
         exercises.append(done_exercise)
-    if start_exercise and start_exercise["id"] not in {exercise["id"] for exercise in exercises}:
-        exercises.append(start_exercise)
-    for recommendation in recommendations:
+    for recommendation in build_smart_queue(
+        library,
+        start_exercise=start_exercise,
+        done_ids=done_ids,
+        limit=6 if profile["preferred_session_minutes"] <= 50 else 7,
+        basis_exercise=done_exercise,
+        weekly_category_sets=weekly_category_sets,
+    ):
         if recommendation["id"] not in {exercise["id"] for exercise in exercises}:
             exercises.append(recommendation)
-        if len(exercises) >= 6:
-            break
 
     if not exercises:
-        exercises = recommend_exercises(limit=6)["recommendations"]
+        exercises = recommend_exercises(
+            limit=6,
+            library=library,
+            weekly_category_sets=weekly_category_sets,
+        )["recommendations"]
 
     initial_current = None
     if start_exercise:
@@ -1001,6 +1190,7 @@ def build_smart_workout_page_model(start_id=None, done_id=None):
         "initial_current_exercise_id": initial_current,
         "coach_tip": coach_tip,
         "latest_session": None,
+        "smart_context": build_smart_context(library),
         "workout": {
             "id": SMART_WORKOUT_ID,
             "name": "Smart Gym Session",
@@ -1049,16 +1239,11 @@ def current_personal_best_map():
 def build_session_achievements(payload):
     achievements = []
     prior_bests = current_personal_best_map()
-    previous_same_workout = get_db().execute(
-        """
-        SELECT volume_kg, completed_at
-        FROM sessions
-        WHERE workout_id = ? AND id != ?
-        ORDER BY completed_at DESC
-        LIMIT 1
-        """,
-        (payload["workout_id"], payload["id"]),
-    ).fetchone()
+    db = get_db()
+    previous_same_workout = db.sessions.find_one(
+        {"workout_id": payload["workout_id"], "_id": {"$ne": payload.get("id")}},
+        sort=[("completed_at", -1)]
+    )
 
     for log in payload["exercise_logs"]:
         exercise_id = log.get("exercise_id")
@@ -1174,45 +1359,306 @@ def save_session(payload):
 
     normalized["achievements"] = build_session_achievements(normalized)
     db = get_db()
-    db.execute(
-        """
-        INSERT OR REPLACE INTO sessions (
-            id, workout_id, workout_name, week, started_at, completed_at,
-            duration_seconds, warmup_seconds, cooldown_seconds,
-            completed_sets, skipped_sets, total_sets, volume_kg,
-            readiness_score, energy, notes, session_feeling,
-            achievements_json, exercise_logs_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            normalized["id"],
-            normalized["workout_id"],
-            normalized["workout_name"],
-            normalized["week"],
-            normalized["started_at"],
-            normalized["completed_at"],
-            normalized["duration_seconds"],
-            normalized["warmup_seconds"],
-            normalized["cooldown_seconds"],
-            normalized["completed_sets"],
-            normalized["skipped_sets"],
-            normalized["total_sets"],
-            normalized["volume_kg"],
-            normalized["readiness_score"],
-            normalized["energy"],
-            normalized["notes"],
-            normalized["session_feeling"],
-            json.dumps(normalized["achievements"]),
-            json.dumps(normalized["exercise_logs"]),
-        ),
+    normalized["_id"] = normalized["id"]
+    db.sessions.update_one(
+        {"_id": normalized["_id"]},
+        {"$set": normalized},
+        upsert=True
     )
-    db.commit()
 
-    row = db.execute("SELECT * FROM sessions WHERE id = ?", (normalized["id"],)).fetchone()
+    row = db.sessions.find_one({"_id": normalized["_id"]})
     return {
         "session": summarize_session(dict(row)),
         "achievements": normalized["achievements"],
         "coach_note": build_post_session_coach_note(normalized),
+    }
+
+
+COACH_ALIAS_OVERRIDES = {
+    "bench": "barbell-bench-press",
+    "bench press": "barbell-bench-press",
+    "db shoulder press": "seated-db-shoulder-press",
+    "dumbbell shoulder press": "seated-db-shoulder-press",
+    "machine shoulder press": "machine-shoulder-press",
+    "lat pulldown": "wide-grip-lat-pulldown",
+    "pulldown": "wide-grip-lat-pulldown",
+    "row": "seated-cable-row",
+    "lateral raise": "lateral-raises",
+    "lateral raises": "lateral-raises",
+    "rope pull": "cable-rope-rear-delt-row",
+    "rope pulls": "cable-rope-rear-delt-row",
+}
+
+
+def normalize_search_text(value):
+    return re.sub(r"[^a-z0-9]+", " ", str(value or "").lower()).strip()
+
+
+def build_exercise_aliases(library):
+    by_id = {exercise["id"]: exercise for exercise in library}
+    aliases = []
+    for alias, exercise_id in COACH_ALIAS_OVERRIDES.items():
+        exercise = by_id.get(exercise_id)
+        if exercise:
+            aliases.append((normalize_search_text(alias), exercise))
+
+    for exercise in library:
+        names = {
+            exercise.get("name", ""),
+            exercise.get("id", "").replace("-", " "),
+        }
+        normalized_name = normalize_search_text(exercise.get("name", ""))
+        if normalized_name.startswith("seated "):
+            names.add(normalized_name.replace("seated ", "", 1))
+        for token in ["dumbbell", "barbell", "machine", "cable", "db"]:
+            names.add(normalized_name.replace(token, "").strip())
+
+        for name in names:
+            alias = normalize_search_text(name)
+            if len(alias) >= 5:
+                aliases.append((alias, exercise))
+
+    deduped = {}
+    for alias, exercise in aliases:
+        deduped.setdefault(alias, exercise)
+    return sorted(deduped.items(), key=lambda item: len(item[0]), reverse=True)
+
+
+def extract_exercise_mentions(message, library):
+    normalized = f" {normalize_search_text(message)} "
+    matches = []
+    seen = set()
+    for alias, exercise in build_exercise_aliases(library):
+        if f" {alias} " not in normalized:
+            continue
+        if exercise["id"] in seen:
+            continue
+        matches.append(exercise)
+        seen.add(exercise["id"])
+    return matches
+
+
+def save_coach_message(role, content, exercise_ids=None):
+    message = {
+        "_id": str(uuid.uuid4()),
+        "role": role,
+        "content": clamp_text(content, "", 1200),
+        "exercise_ids": list(dict.fromkeys(exercise_ids or []))[:12],
+        "created_at": now_iso(),
+    }
+    db = get_db()
+    db.coach_messages.insert_one(message)
+    message["id"] = message["_id"]
+    return message
+
+
+def list_coach_messages(limit=12):
+    db = get_db()
+    cursor = db.coach_messages.find().sort("created_at", -1).limit(limit)
+    messages = []
+    for doc in cursor:
+        doc["id"] = doc["_id"]
+        doc["created_at_label"] = format_relative_date(doc["created_at"])
+        messages.append(doc)
+    return messages
+
+
+def recent_coach_exercise_ids(limit=10):
+    ids = []
+    for message in list_coach_messages(limit=30):
+        if message["role"] != "user":
+            continue
+        for exercise_id in message.get("exercise_ids", []):
+            if exercise_id not in ids:
+                ids.append(exercise_id)
+            if len(ids) >= limit:
+                return ids
+    return ids
+
+
+def latest_logged_exercise_id():
+    _session, logs = latest_session_exercise_logs()
+    for log in logs:
+        if log.get("exercise_id"):
+            return log["exercise_id"]
+    recent_ids = recent_coach_exercise_ids(limit=1)
+    return recent_ids[0] if recent_ids else None
+
+
+def exercise_card(exercise):
+    return {
+        "id": exercise["id"],
+        "name": exercise["name"],
+        "category": exercise.get("category"),
+        "category_label": exercise.get("category_label"),
+        "sets": exercise.get("sets"),
+        "reps": exercise.get("reps"),
+        "target": format_exercise_weight(exercise),
+        "equipment": exercise.get("equipment"),
+        "preference_status": exercise.get("preference_status"),
+        "start_url": f"/smart?start={exercise['id']}",
+    }
+
+
+def build_coach_context(program=None):
+    program = program or load_program()
+    dashboard = build_dashboard(program)
+    library = build_exercise_library(program)
+    latest_session, latest_logs = latest_session_exercise_logs()
+    recent_messages = list_coach_messages(limit=10)
+    basis_id = latest_logged_exercise_id()
+    recent_done = recent_coach_exercise_ids(limit=8)
+    if basis_id and basis_id not in recent_done:
+        recent_done.append(basis_id)
+    weekly_category_sets = build_weekly_category_sets(library)
+    recommendations = recommend_exercises(
+        after_id=basis_id,
+        done_ids=recent_done,
+        limit=5,
+        library=library,
+        weekly_category_sets=weekly_category_sets,
+    )["recommendations"]
+
+    return {
+        "profile": dashboard["profile"],
+        "readiness": dashboard["readiness"],
+        "next_workout": dashboard["next_workout"],
+        "recent_sessions": dashboard["recent_sessions"][:4],
+        "latest_session": latest_session,
+        "latest_exercises": [
+            {"id": log.get("exercise_id"), "name": log.get("exercise_name")}
+            for log in latest_logs
+            if log.get("exercise_id")
+        ][:6],
+        "recent_messages": list(reversed(recent_messages)),
+        "recommendations": [exercise_card(exercise) for exercise in recommendations],
+        "memory_count": len(recent_messages),
+        "weekly_balance": build_smart_context(library)["weekly_balance"],
+    }
+
+
+def call_openai_coach(user_message, context, library, limit=5):
+    try:
+        client = get_openai_client()
+        
+        db = get_db()
+        recent_full_sessions = list(db.sessions.find().sort("completed_at", -1).limit(3))
+        detailed_history = []
+        for s in recent_full_sessions:
+            detailed_history.append({
+                "workout_name": s["workout_name"],
+                "completed_at": s["completed_at"],
+                "exercise_logs": [
+                    {
+                        "exercise_name": log.get("exercise_name"),
+                        "completed_sets": log.get("completed_sets"),
+                        "reps": log.get("reps"),
+                        "working_weight": log.get("working_weight")
+                    } for log in s.get("exercise_logs", [])
+                ]
+            })
+            
+        personal_bests = current_personal_best_map()
+
+        system_prompt = f"""
+        You are an intelligent AI bodybuilding coach for the Iron Log app.
+        User Profile: {context['profile']['name']}
+        Training Goal: {context['profile']['training_goal']}
+        Focus Area: {context['profile']['focus_area']}
+        Current Readiness Score: {context['readiness']['score']}/100 ({context['readiness']['label']}).
+        
+        Based on the user's detailed recent sessions (which include weights and reps), personal bests, fatigue, and their current message, provide a coaching response and recommend up to {limit} exercise IDs for them to do next.
+        You MUST consider previous workouts and weight progressions to plan a workout based on their needs.
+        If the user asks to skip an exercise, you MUST NOT recommend it, and suggest another suitable one.
+        
+        Reply strictly in JSON format:
+        {{
+            "reply": "Your conversational, encouraging, and intelligent coaching message here.",
+            "recommended_exercise_ids": ["exercise-id-1", "exercise-id-2"]
+        }}
+        """
+        
+        available_exercises = [{"id": ex["id"], "name": ex["name"], "category": ex["category"]} 
+                               for ex in library if ex.get("preference_status") != "avoid"]
+        
+        user_prompt = f"""
+        Detailed Recent History (Weights & Reps): {json.dumps(detailed_history)}
+        Personal Bests (Exercise ID -> Max Weight): {json.dumps(personal_bests)}
+        Available Exercises: {json.dumps(available_exercises)}
+        
+        User Message: "{user_message}"
+        """
+        
+        response = client.chat.completions.create(
+            model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            response_format={"type": "json_object"}
+        )
+        data = json.loads(response.choices[0].message.content)
+        return data.get("reply", "I've logged that. Let's keep moving."), data.get("recommended_exercise_ids", [])
+    except Exception as e:
+        print(f"OpenAI Error: {e}")
+        return "I had trouble processing that with AI, but I've updated your local memory.", []
+
+
+def build_coach_reply(user_message):
+    program = load_program()
+    library = build_exercise_library(program)
+    mentions = extract_exercise_mentions(user_message, library)
+    mentioned_ids = [exercise["id"] for exercise in mentions]
+    if user_message.strip():
+        save_coach_message("user", user_message, mentioned_ids)
+
+    context = build_coach_context(program)
+    
+    reply_text, ai_recommended_ids = call_openai_coach(user_message, context, library, limit=5)
+    
+    recommendations = []
+    exercise_by_id = {ex["id"]: ex for ex in library}
+    for eid in ai_recommended_ids:
+        if eid in exercise_by_id:
+            recommendations.append(exercise_by_id[eid])
+            
+    if not recommendations:
+        basis_id = mentioned_ids[-1] if mentioned_ids else latest_logged_exercise_id()
+        done_ids = list(dict.fromkeys(mentioned_ids + recent_coach_exercise_ids(limit=8)))
+        recommendations = recommend_exercises(
+            after_id=basis_id,
+            done_ids=done_ids,
+            limit=5,
+            library=library,
+            weekly_category_sets=build_weekly_category_sets(library),
+        )["recommendations"]
+        if not reply_text or "trouble processing" in reply_text:
+            reply_text = "I've checked your history. Here are some local recommendations to keep the session moving."
+
+    save_coach_message("assistant", reply_text, [exercise["id"] for exercise in recommendations[:4]])
+
+    return {
+        "reply": reply_text,
+        "mentioned_exercises": [exercise_card(exercise) for exercise in mentions],
+        "recommendations": [exercise_card(exercise) for exercise in recommendations],
+        "context": build_coach_context(program),
+    }
+
+
+def build_coach_page_model():
+    context = build_coach_context(load_program())
+    greeting = (
+        "Tell me what you did, what equipment is free, or ask what to do next. "
+        "I will use your saved sessions, exercise preferences, and muscle-growth goal."
+    )
+    return {
+        "context": context,
+        "greeting": greeting,
+        "suggested_prompts": [
+            "What should I train next today?",
+            "I did machine shoulder press and lateral raises yesterday.",
+            "Plan a 45 minute muscle growth session from what is free.",
+        ],
     }
 
 
@@ -1263,6 +1709,11 @@ def exercises():
         model=build_exercise_library_page_model(),
         image_base=load_program()["image_base"],
     )
+
+
+@app.route("/coach")
+def coach():
+    return render_template("coach.html", model=build_coach_page_model())
 
 
 @app.route("/api/dashboard")
@@ -1333,11 +1784,37 @@ def api_exercises():
     return jsonify(model)
 
 
+@app.route("/api/exercise-preferences/<exercise_id>", methods=["POST"])
+def api_exercise_preference(exercise_id):
+    payload = request.get_json(silent=True) or {}
+    preference = save_exercise_preference(exercise_id, payload)
+    return jsonify({"preference": preference})
+
+
+@app.route("/api/coach/context")
+def api_coach_context():
+    return jsonify(build_coach_context(load_program()))
+
+
+@app.route("/api/coach/chat", methods=["POST"])
+def api_coach_chat():
+    payload = request.get_json(silent=True) or {}
+    message = clamp_text(payload.get("message"), "", 1200)
+    if not message:
+        return jsonify({"error": "Message is required"}), 400
+    return jsonify(build_coach_reply(message))
+
+
 @app.route("/api/recommendations")
 def api_recommendations():
     done = [
         item
         for item in (request.args.get("done") or "").split(",")
+        if item
+    ]
+    unavailable = [
+        item
+        for item in (request.args.get("unavailable") or "").split(",")
         if item
     ]
     limit = safe_int(request.args.get("limit"), 8, minimum=1, maximum=12)
@@ -1346,6 +1823,7 @@ def api_recommendations():
             after_id=request.args.get("after"),
             done_ids=done,
             limit=limit,
+            unavailable_ids=unavailable,
         )
     )
 

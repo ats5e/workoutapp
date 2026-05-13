@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block title %}AI Coach - Iron Log{% endblock %}
+
+{% block header_right %}
+<div class="flex items-center gap-1">
+    <a href="{{ url_for('exercises') }}" class="text-[10px] font-mono tracking-widest uppercase text-slate-400 hover:text-accent transition-colors rounded-md border border-white/5 bg-white/5 hover:bg-accent/10 px-3 py-1.5">Library</a>
+    <a href="{{ url_for('index') }}" class="text-[10px] font-mono tracking-widest uppercase text-slate-400 hover:text-accent transition-colors rounded-md border border-white/5 bg-white/5 hover:bg-accent/10 px-3 py-1.5 -mr-2">Dashboard</a>
+</div>
+{% endblock %}
+
+{% block content %}
+<div x-data='aiCoachView({{ model | tojson }})' x-init="init()" class="space-y-5">
+    <section class="border-b border-white/10 pb-4">
+        <p class="text-[10px] font-bold uppercase tracking-[0.3em] font-mono text-accent mb-1 flex items-center gap-2">
+            <span class="w-1.5 h-1.5 bg-accent rounded-sm animate-pulse shadow-neon"></span>
+            Adaptive Coach
+        </p>
+        <h1 class="font-display text-3xl font-bold tracking-tight text-white">AI Coach</h1>
+    </section>
+
+    <section class="grid grid-cols-3 gap-2 text-[10px] font-mono uppercase tracking-widest text-slate-400">
+        <div class="rounded-sm border border-white/10 bg-white/5 p-3">
+            <span class="block text-slate-500">Readiness</span>
+            <span class="mt-1 block text-base font-bold text-white" x-text="readiness.score ?? '—'"></span>
+        </div>
+        <div class="rounded-sm border border-white/10 bg-white/5 p-3">
+            <span class="block text-slate-500">Memory</span>
+            <span class="mt-1 block text-base font-bold text-white" x-text="context.memory_count || 0"></span>
+        </div>
+        <div class="rounded-sm border border-white/10 bg-white/5 p-3">
+            <span class="block text-slate-500">Next</span>
+            <span class="mt-1 block text-base font-bold text-accent truncate" x-text="nextWorkout?.name || 'Smart'"></span>
+        </div>
+    </section>
+
+    <section class="glass-panel rounded-xl border border-accent/20 p-4">
+        <div class="flex items-start justify-between gap-3 border-b border-white/5 pb-3 mb-3">
+            <div class="min-w-0">
+                <p class="text-[10px] font-bold uppercase tracking-[0.2em] text-accent font-mono">// NEXT BLOCK</p>
+                <h2 class="mt-1 font-display text-lg font-bold text-white" x-text="nextWorkout?.name || 'Smart Gym Session'"></h2>
+            </div>
+            <a :href="recommendations[0]?.start_url || '{{ url_for('smart_workout') }}'"
+               class="rounded-sm bg-accent/10 border border-accent/50 px-3 py-2 text-[10px] font-mono font-bold tracking-widest uppercase text-accent hover:bg-accent hover:text-surface-300 transition-colors">
+                Start
+            </a>
+        </div>
+        <div class="space-y-2">
+            <template x-for="exercise in recommendations" :key="exercise.id">
+                <a :href="exercise.start_url"
+                   class="block rounded-sm border border-white/10 bg-surface-200/60 p-3 hover:border-accent/30 transition-colors">
+                    <div class="flex items-start justify-between gap-3">
+                        <div class="min-w-0">
+                            <p class="text-sm font-bold text-white" x-text="exercise.name"></p>
+                            <p class="mt-1 text-[10px] font-mono uppercase tracking-wider text-slate-500">
+                                <span x-text="exercise.category_label"></span>
+                                <span> · </span>
+                                <span x-text="`${exercise.sets} x ${exercise.reps}`"></span>
+                            </p>
+                        </div>
+                        <span class="flex-shrink-0 rounded-sm border border-white/10 bg-white/5 px-2 py-0.5 text-[9px] font-mono uppercase tracking-widest text-slate-300" x-text="exercise.equipment"></span>
+                    </div>
+                </a>
+            </template>
+        </div>
+    </section>
+
+    <section class="glass-panel rounded-xl border border-white/10 p-4">
+        <div class="space-y-3 max-h-[28rem] overflow-y-auto pr-1">
+            <template x-for="(message, index) in messages" :key="`${message.role}-${index}`">
+                <div class="rounded-lg border p-3 text-sm leading-relaxed" :class="messageClass(message.role)">
+                    <p class="text-[9px] font-mono font-bold uppercase tracking-[0.2em] mb-1" :class="message.role === 'user' ? 'text-accent' : 'text-slate-500'" x-text="message.role === 'user' ? 'You' : 'Coach'"></p>
+                    <p x-text="message.content"></p>
+                </div>
+            </template>
+            <div id="coach-chat-bottom"></div>
+        </div>
+
+        <div class="mt-4 flex flex-wrap gap-2">
+            {% for prompt in model.suggested_prompts %}
+            <button type="button"
+                    @click="usePrompt({{ prompt | tojson }})"
+                    class="rounded-sm border border-white/10 bg-white/5 px-2 py-1.5 text-[10px] font-mono uppercase tracking-wider text-slate-300 hover:border-accent/40 hover:text-accent transition-colors">
+                {{ prompt }}
+            </button>
+            {% endfor %}
+        </div>
+
+        <div class="mt-4 space-y-2">
+            <textarea x-model="draft"
+                      @keydown.enter.prevent="send()"
+                      rows="3"
+                      class="w-full rounded-sm border border-white/10 bg-surface-200 px-3 py-2 text-sm text-white focus:border-accent focus:ring-1 focus:ring-accent outline-none resize-none placeholder:text-slate-600"
+                      placeholder="Tell the coach what happened..."></textarea>
+            <button type="button"
+                    @click="send()"
+                    :disabled="sending || !draft.trim()"
+                    class="w-full rounded-md bg-accent/10 border border-accent/50 text-accent hover:bg-accent hover:text-surface-300 px-5 py-3 font-mono font-bold tracking-widest uppercase transition-all disabled:opacity-50">
+                <span x-text="sending ? 'Thinking...' : 'Send to Coach'"></span>
+            </button>
+            <p class="text-xs text-rose-300 text-center font-mono" x-show="errorMessage" x-text="errorMessage"></p>
+        </div>
+    </section>
+</div>
+
+<script src="{{ url_for('static', filename='js/workout.js') }}"></script>
+{% endblock %}

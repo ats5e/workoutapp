@@ -7,12 +7,10 @@ services:
     startCommand: "gunicorn app:app"
     healthCheckPath: /healthz
     autoDeployTrigger: commit
-    disk:
-      name: iron-log-data
-      mountPath: /var/data
-      sizeGB: 5
     envVars:
       - key: PYTHON_VERSION
         value: 3.13.3
-      - key: DATABASE_PATH
-        value: /var/data/ironlog.db
+      - key: MONGODB_URI
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
