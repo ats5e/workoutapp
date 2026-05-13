@@ -1591,14 +1591,22 @@ def build_coach_context(program=None):
 def call_openai_coach(user_message, context, library, limit=5):
     try:
         client = get_openai_client()
+        if not client.api_key:
+            return "Coach is currently offline (Missing API Key).", []
         
         db = get_db()
-        recent_full_sessions = list(db.sessions.find().sort("completed_at", -1).limit(3))
+        # Safely fetch recent sessions
+        try:
+            recent_full_sessions = list(db.sessions.find().sort("completed_at", -1).limit(3))
+        except Exception as db_err:
+            app.logger.error(f"DB Fetch Error in Chat: {db_err}")
+            recent_full_sessions = []
+
         detailed_history = []
         for s in recent_full_sessions:
             detailed_history.append({
-                "workout_name": s["workout_name"],
-                "completed_at": s["completed_at"],
+                "workout_name": s.get("workout_name", "Unknown Workout"),
+                "completed_at": str(s.get("completed_at", "Unknown")),
                 "exercise_logs": [
                     {
                         "exercise_name": log.get("exercise_name"),
@@ -1611,36 +1619,36 @@ def call_openai_coach(user_message, context, library, limit=5):
             
         personal_bests = current_personal_best_map()
 
-        system_prompt = f"""You are an Elite Strength & Conditioning Coach (Persona: GPT-5.5). 
-Your mission is to provide HIGH-FIDELITY, personalized coaching. 
+        system_prompt = f"""You are the Elite Iron Log AI Coach (Persona: GPT-5.5). 
+Your mission: Provide HYPER-PERSONALIZED, DATA-DRIVEN coaching.
 
-COACHING RULES:
-1. DATA DRIVEN: Analyze the 'Detailed Recent History' and 'Personal Bests' provided. Spot trends (e.g., 'You've plateaued on Squats' or 'Your volume is up 10%').
-2. PRESCRIPTIVE: If the user asks for a workout, don't be vague. Give them a full list of exercises, sets, reps, and target weights based on their history.
-3. PERSONALITY: Be professional, motivating, and authoritative. Use the user's name: {context['profile']['name']}.
-4. GOAL ORIENTED: Align every piece of advice with their goal: {context['profile']['training_goal']} and focus: {context['profile']['focus_area']}.
-5. READINESS: Adjust your intensity recommendation based on their Readiness: {context['readiness']['score']}/100.
+CORE INSTRUCTIONS:
+1. ANALYSIS: Use the 'Detailed Recent History' and 'Personal Bests'. If the user asks for a workout, check what they did last and suggest a logical progression.
+2. PRESCRIPTION: Be specific. Recommend Exercises, Sets, Reps, and Weights.
+3. PERSONALITY: Authoritative, elite, and motivating. User: {context['profile']['name']}.
 
-Reply strictly in JSON format:
+Response Schema (STRICT JSON):
 {{
-    "reply": "Your detailed, elite coaching response here. Be verbose and specific.",
-    "recommended_exercise_ids": ["exercise-id-1", "exercise-id-2"]
+    "reply": "Your conversational coaching advice here.",
+    "recommended_exercise_ids": ["id1", "id2"]
 }}"""
 
         available_exercises = [{"id": ex["id"], "name": ex["name"], "category": ex["category"]} 
                                for ex in library if ex.get("preference_status") != "avoid"]
         
         user_prompt = f"""
-        User Stats & Readiness: {json.dumps(context['readiness'])}
-        Detailed Recent History: {json.dumps(detailed_history)}
+        User Context: {json.dumps(context['profile'])}
+        Readiness: {json.dumps(context['readiness'])}
+        Recent History: {json.dumps(detailed_history)}
         Personal Bests: {json.dumps(personal_bests)}
-        Available Exercise IDs: {json.dumps(available_exercises)}
+        Library: {json.dumps(available_exercises)}
         
         User Message: "{user_message}"
         """
         
+        model_name = os.environ.get("OPENAI_MODEL", "gpt-4o") # Safer default
         response = client.chat.completions.create(
-            model=os.environ.get("OPENAI_MODEL", "gpt-5.5"),
+            model=model_name,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -1649,11 +1657,12 @@ Reply strictly in JSON format:
             max_tokens=800,
             temperature=0.8
         )
-        data = json.loads(response.choices[0].message.content)
-        return data.get("reply", "Great work. Let's keep moving."), data.get("recommended_exercise_ids", [])
+        content = response.choices[0].message.content
+        data = json.loads(content)
+        return data.get("reply", "I've analyzed your data. Let's get to work."), data.get("recommended_exercise_ids", [])
     except Exception as e:
-        print(f"OpenAI Error: {e}")
-        return "I had trouble processing that with AI, but I've updated your local memory.", []
+        app.logger.error(f"Elite Coach AI Error: {e}")
+        return f"Coach encountered a cognitive error ({str(e)[:50]}...). I'm switching to local guidance.", []
 
 
 def build_coach_reply(user_message):
