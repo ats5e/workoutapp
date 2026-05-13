@@ -305,6 +305,10 @@ function aiCoachView(initialModel) {
                 });
                 this.messages.push({ role: "assistant", content: data.reply });
                 this.context = data.context || this.context;
+                // Specifically update recommendations so the 'Next Block' UI refreshes
+                if (data.recommendations) {
+                    this.context.recommendations = data.recommendations;
+                }
                 window.requestAnimationFrame(() => {
                     document.getElementById("coach-chat-bottom")?.scrollIntoView({
                         behavior: "smooth",
