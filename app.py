@@ -49,8 +49,8 @@ def require_auth():
     # Only enforce if credentials are set in environment
     if not app.config.get('BASIC_AUTH_USERNAME') or not app.config.get('BASIC_AUTH_PASSWORD'):
         return
-    # Exempt health check and static files using paths for maximum robustness
-    if request.path == '/healthz' or request.path.startswith('/static/'):
+    # Exempt health check and static files if needed (though usually fine to protect static)
+    if request.endpoint in ['healthz', 'static']:
         return
     if not basic_auth.authenticate():
         return basic_auth.challenge()
@@ -1883,6 +1883,7 @@ def api_smart_engine_recommend():
     unavailable_ids = payload.get("unavailable_ids", [])
     target_exercise_id = payload.get("target_exercise_id")
     current_exercise_id = payload.get("current_exercise_id")
+    substitute_for_id = payload.get("substitute_for_id")
     readiness = payload.get("readiness", {})
 
     program = load_program()
@@ -1906,48 +1907,54 @@ def api_smart_engine_recommend():
     
     # Fetch history for the specific target exercise if requested
     exercise_history = []
+    # Fetch history for the relevant exercise context
+    exercise_history = []
     if target_exercise_id:
         exercise_history = get_exercise_history(target_exercise_id, limit=1)
+    elif substitute_for_id:
+        exercise_history = get_exercise_history(substitute_for_id, limit=1)
     elif current_exercise_id:
         exercise_history = get_exercise_history(current_exercise_id, limit=1)
 
     system_prompt = f"""You are an elite AI strength and conditioning coach inside the Iron Log app.
-Your task is to either assign target loads/reps for a SPECIFIC chosen exercise, OR suggest the NEXT best exercise for the user based on their current session and weekly balance.
+Your task is to assign target loads/reps for a SPECIFIC chosen exercise, OR suggest the NEXT best exercise, OR suggest a SUBSTITUTION.
 
-Core Coaching Philosophy:
+STRICT INSTRUCTIONS:
 1. Progressive Overload: If the user is 'Ready', push for a small increase in weight (2.5kg) or 1-2 extra reps compared to their last performance.
 2. Volume Management: Avoid over-taxing muscle groups that have high volume in the 'Weekly Category Balance'.
-3. Efficiency: Keep rest periods appropriate for the lift (heavy compound = more rest, isolation = less rest).
+3. Substitution Logic: If 'substitute_for_id' is provided, suggest a different exercise that targets the SAME muscle groups.
 
-Respond ONLY with a valid JSON object matching this schema, with no markdown formatting or extra text:
+Respond ONLY with a valid JSON object matching this schema:
 {{
   "exercise_id": "the exact ID of the chosen exercise from the library",
   "target_sets": (integer) recommended sets,
   "target_reps": "(string) recommended reps (e.g. '8-10')",
-  "target_weight_kg": (number) recommended weight in kg based on their history. (use 0 for bodyweight),
-  "target_rest_seconds": (integer) recommended rest time in seconds (e.g. 90, 120),
-  "coach_tip": "(string) 1-2 short, punchy sentences explaining the logic (e.g. 'Pushing for +2.5kg today because your readiness is high.')"
+  "target_weight_kg": (number) recommended weight,
+  "target_rest_seconds": (integer) recommended rest,
+  "coach_tip": "(string) punchy logic for the choice"
 }}
 
 Context:
 User Profile Goals: {json.dumps(profile)}
-Weekly Category Balance (so far this week): {json.dumps(weekly_balance)}
+Weekly Category Balance: {json.dumps(weekly_balance)}
 User Readiness today: {json.dumps(readiness.get('label'))}
-Recent Performance for this/last exercise: {json.dumps(exercise_history)}
-Already completed this session: {json.dumps(done_exercises)}
+Recent Performance Context: {json.dumps(exercise_history)}
 Available Library: {json.dumps(lib_summary)}
 """
     
-    user_msg = "Please prescribe the next exercise and its targets."
-    if target_exercise_id:
-        user_msg = f"The user has explicitly chosen to do the exercise with ID: '{target_exercise_id}'. Please prescribe the target sets, reps, weight, and rest for this specific exercise."
-    elif current_exercise_id:
-        current_name = current_exercise_id
+    if substitute_for_id:
+        sub_name = substitute_for_id
         for ex in library:
-             if ex["id"] == current_exercise_id:
-                  current_name = ex["name"]
-                  break
-        user_msg = f"The user just finished or is currently doing the exercise: '{current_name}'. Suggest the next best exercise from the library."
+            if ex["id"] == substitute_for_id:
+                sub_name = ex["name"]
+                break
+        user_msg = f"The user wants to substitute '{sub_name}' (ID: {substitute_for_id}). Suggest a replacement that targets the same muscle groups and prescribe targets."
+    elif target_exercise_id:
+        user_msg = f"The user has explicitly chosen to do the exercise with ID: '{target_exercise_id}'. Prescribe the target sets, reps, weight, and rest."
+    elif current_exercise_id:
+        user_msg = f"The user just finished '{current_exercise_id}'. Suggest the next best exercise from the library and prescribe targets."
+    else:
+        user_msg = "Please suggest the best first exercise for today's session."
 
     client = get_openai_client()
     if not client.api_key:
@@ -1961,7 +1968,7 @@ Available Library: {json.dumps(lib_summary)}
                 {"role": "user", "content": user_msg}
             ],
             response_format={"type": "json_object"},
-            max_tokens=250,
+            max_tokens=300,
             temperature=0.7
         )
         content = response.choices[0].message.content

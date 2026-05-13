@@ -1148,6 +1148,33 @@ function workoutSession(initialModel) {
             this.persistDraft();
         },
 
+        async substituteExercise(index) {
+            const exercise = this.workout.exercises[index];
+            if (!exercise) return;
+
+            this.smartMessage = `AI Coach is finding a substitution for ${exercise.name}...`;
+            const aiData = await this.fetchAIRecommendation({ substitute_for_id: exercise.id });
+            
+            if (aiData) {
+                const newExercise = this.findLibraryExercise(aiData.exercise_id || aiData.id);
+                if (newExercise) {
+                    // Update the exercise in the list
+                    this.workout.exercises[index] = newExercise;
+                    // Reset its state
+                    this.exerciseStates[index] = this.initExerciseState(newExercise);
+                    // Apply AI targets
+                    this.applyAITargets(newExercise, aiData);
+                    this.smartMessage = `Substituted ${exercise.name} with ${newExercise.name}. ${aiData.ai_coach_tip || ''}`;
+                    if (this.exerciseIdx === index) {
+                        this.setIdx = 0;
+                    }
+                }
+            } else {
+                this.smartMessage = "AI Coach could not find a suitable substitution right now.";
+            }
+            this.persistDraft();
+        },
+
         recommendationScore(after, candidate, index) {
             if (!after || !candidate || candidate.id === after.id) return -1;
             if (candidate.preference_status === "avoid" || candidate.is_available === false) return -1;
