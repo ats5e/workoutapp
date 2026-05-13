@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pymongo import MongoClient
 from openai import OpenAI
+import certifi
 
 from flask import Flask, abort, g, jsonify, render_template, request
 
@@ -229,7 +230,7 @@ def get_db():
         uri = os.environ.get("MONGODB_URI")
         if not uri:
             uri = "mongodb://localhost:27017/"
-        mongo_client = MongoClient(uri)
+        mongo_client = MongoClient(uri, tlsCAFile=certifi.where())
     return mongo_client.ironlog
 
 

@@ -3,3 +3,4 @@ gunicorn==22.0.0
 pymongo==4.10.1
 openai==1.55.0
 python-dotenv==1.0.1
+certifi
