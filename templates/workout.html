@@ -86,7 +86,7 @@
                             <p class="text-[10px] font-bold uppercase tracking-[0.2em] text-accent font-mono flex items-center gap-2">
                                 <span class="w-1.5 h-1.5 bg-accent animate-pulse"></span>
                                 <span x-show="!isThinking">AI Engine // GPT-5.5</span>
-                                <span x-show="isThinking" class="text-amber-300 animate-pulse">AI Coach is thinking…</span>
+                                <span x-show="isThinking" class="text-amber-300 animate-pulse" x-text="thinkingMessage"></span>
                             </p>
                             <h2 class="mt-1 font-display text-xl font-bold leading-tight text-white" x-text="currentExercise.name"></h2>
                             <p class="mt-1 text-xs font-mono tracking-wider text-slate-300">

@@ -10,6 +10,7 @@ from openai import OpenAI
 import certifi
 
 from flask import Flask, abort, g, jsonify, render_template, request
+from flask_basicauth import BasicAuth
 
 BASE_DIR = Path(__file__).parent
 WORKOUTS_FILE = BASE_DIR / "workouts.json"
@@ -36,6 +37,13 @@ DEFAULT_EXERCISE_PREFERENCES = {
 VALID_PREFERENCE_STATUSES = {"neutral", "preferred", "avoid"}
 
 app = Flask(__name__)
+app.config['BASIC_AUTH_USERNAME'] = os.environ.get('APP_USERNAME')
+app.config['BASIC_AUTH_PASSWORD'] = os.environ.get('APP_PASSWORD')
+# Only force auth if credentials are provided in env
+if app.config['BASIC_AUTH_USERNAME'] and app.config['BASIC_AUTH_PASSWORD']:
+    app.config['BASIC_AUTH_FORCE'] = True
+
+basic_auth = BasicAuth(app)
 
 CATEGORY_META = [
     {
@@ -230,7 +238,16 @@ def get_db():
         uri = os.environ.get("MONGODB_URI")
         if not uri:
             uri = "mongodb://localhost:27017/"
-        mongo_client = MongoClient(uri, tlsCAFile=certifi.where())
+        
+        # Enhanced connection for stability and Atlas compatibility
+        mongo_client = MongoClient(
+            uri, 
+            tlsCAFile=certifi.where(),
+            tls=True,
+            retryWrites=True,
+            serverSelectionTimeoutMS=5000,
+            connectTimeoutMS=10000
+        )
     return mongo_client.ironlog
 
 
@@ -492,6 +509,26 @@ def list_sessions(limit=12):
 
 def load_session_logs(row):
     return row.get("exercise_logs") or []
+
+
+def get_exercise_history(exercise_id, limit=3):
+    db = get_db()
+    # Find sessions containing this exercise
+    cursor = db.sessions.find(
+        {"exercise_logs.exercise_id": exercise_id},
+        {"completed_at": 1, "exercise_logs.$": 1}
+    ).sort("completed_at", -1).limit(limit)
+    
+    history = []
+    for row in cursor:
+        log = row["exercise_logs"][0]
+        history.append({
+            "date": row["completed_at"],
+            "weight": log.get("working_weight"),
+            "sets": log.get("completed_sets"),
+            "reps": log.get("reps")
+        })
+    return history
 
 
 def load_session_achievements(row):
@@ -1857,8 +1894,21 @@ def api_smart_engine_recommend():
         for ex in available_library
     ]
     
+    # Fetch history for the specific target exercise if requested
+    exercise_history = []
+    if target_exercise_id:
+        exercise_history = get_exercise_history(target_exercise_id, limit=1)
+    elif current_exercise_id:
+        exercise_history = get_exercise_history(current_exercise_id, limit=1)
+
     system_prompt = f"""You are an elite AI strength and conditioning coach inside the Iron Log app.
 Your task is to either assign target loads/reps for a SPECIFIC chosen exercise, OR suggest the NEXT best exercise for the user based on their current session and weekly balance.
+
+Core Coaching Philosophy:
+1. Progressive Overload: If the user is 'Ready', push for a small increase in weight (2.5kg) or 1-2 extra reps compared to their last performance.
+2. Volume Management: Avoid over-taxing muscle groups that have high volume in the 'Weekly Category Balance'.
+3. Efficiency: Keep rest periods appropriate for the lift (heavy compound = more rest, isolation = less rest).
+
 Respond ONLY with a valid JSON object matching this schema, with no markdown formatting or extra text:
 {{
   "exercise_id": "the exact ID of the chosen exercise from the library",
@@ -1866,13 +1916,14 @@ Respond ONLY with a valid JSON object matching this schema, with no markdown for
   "target_reps": "(string) recommended reps (e.g. '8-10')",
   "target_weight_kg": (number) recommended weight in kg based on their history. (use 0 for bodyweight),
   "target_rest_seconds": (integer) recommended rest time in seconds (e.g. 90, 120),
-  "coach_tip": "(string) 1-2 short sentences explaining why you chose this weight/exercise."
+  "coach_tip": "(string) 1-2 short, punchy sentences explaining the logic (e.g. 'Pushing for +2.5kg today because your readiness is high.')"
 }}
 
 Context:
 User Profile Goals: {json.dumps(profile)}
 Weekly Category Balance (so far this week): {json.dumps(weekly_balance)}
 User Readiness today: {json.dumps(readiness.get('label'))}
+Recent Performance for this/last exercise: {json.dumps(exercise_history)}
 Already completed this session: {json.dumps(done_exercises)}
 Available Library: {json.dumps(lib_summary)}
 """

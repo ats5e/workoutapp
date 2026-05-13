@@ -485,6 +485,16 @@ function workoutSession(initialModel) {
         librarySelectedId: "",
         smartMessage: "",
         isThinking: false,
+        thinkingMessage: "AI Coach is thinking...",
+        thinkingMessages: [
+            "Analyzing your weekly volume...",
+            "Checking muscle group balance...",
+            "Optimizing your progressive overload...",
+            "Consulting the GPT-5.5 engine...",
+            "Fine-tuning your rest periods...",
+            "Calculating optimal path..."
+        ],
+        thinkingInterval: null,
         aiCoachTip: "",
         aiRecommendation: null,
         aiRestSeconds: 0,
@@ -1004,6 +1014,15 @@ function workoutSession(initialModel) {
             if (!this.workout.smart_mode) return null;
             this.isThinking = true;
             this.aiCoachTip = "";
+            
+            // Start rotating thinking messages for premium feel
+            let msgIdx = 0;
+            this.thinkingMessage = this.thinkingMessages[0];
+            const interval = setInterval(() => {
+                msgIdx = (msgIdx + 1) % this.thinkingMessages.length;
+                this.thinkingMessage = this.thinkingMessages[msgIdx];
+            }, 2500);
+
             const doneExerciseIds = this.workout.exercises
                 .map((ex, idx) => this.isExerciseComplete(idx) ? ex.id : null)
                 .filter(Boolean);
@@ -1040,6 +1059,7 @@ function workoutSession(initialModel) {
                 return null;
             } finally {
                 this.isThinking = false;
+                clearInterval(interval);
             }
         },
 
