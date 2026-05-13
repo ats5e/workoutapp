@@ -49,8 +49,8 @@ def require_auth():
     # Only enforce if credentials are set in environment
     if not app.config.get('BASIC_AUTH_USERNAME') or not app.config.get('BASIC_AUTH_PASSWORD'):
         return
-    # Exempt health check and static files if needed (though usually fine to protect static)
-    if request.endpoint in ['healthz', 'static']:
+    # Exempt health check and static files using paths for maximum robustness
+    if request.path == '/healthz' or request.path.startswith('/static/'):
         return
     if not basic_auth.authenticate():
         return basic_auth.challenge()
