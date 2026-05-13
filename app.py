@@ -1590,7 +1590,7 @@ def call_openai_coach(user_message, context, library, limit=5):
         """
         
         response = client.chat.completions.create(
-            model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+            model=os.environ.get("OPENAI_MODEL", "gpt-5.5"),
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
