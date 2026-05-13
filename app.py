@@ -1965,7 +1965,47 @@ Available Library: {json.dumps(lib_summary)}
 def api_sessions():
     payload = request.get_json(silent=True) or {}
     saved = save_session(payload)
+    
+    # Generate a premium AI debrief for the session
+    debrief = "Great session today! Your progress is being tracked."
+    try:
+        debrief = generate_coach_debrief(payload)
+    except Exception as e:
+        app.logger.error(f"Debrief error: {e}")
+        
+    saved["coach_debrief"] = debrief
     return jsonify(saved), 201
+
+
+def generate_coach_debrief(session_data):
+    profile = get_profile()
+    session_summary = {
+        "workout_name": session_data.get("workout_name"),
+        "duration": f"{session_data.get('duration_seconds', 0) // 60} mins",
+        "exercises": [
+            f"{log.get('exercise_name')}: {log.get('completed_sets')} sets @ {log.get('working_weight')}kg"
+            for log in session_data.get("exercise_logs", [])
+        ]
+    }
+    
+    system_prompt = f"""You are an elite strength coach. The user just finished a workout. 
+Provide a short (2-3 sentence) professional debrief summarizing their effort and giving them one piece of positive reinforcement or a tip for next time based on their goals: {json.dumps(profile.get('training_goal'))}.
+Keep it punchy, motivating, and elite. No markdown."""
+
+    client = get_openai_client()
+    if not client.api_key:
+        return "Session saved. Configure OpenAI for AI debriefs."
+
+    response = client.chat.completions.create(
+        model=os.environ.get("OPENAI_MODEL", "gpt-5.5"),
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Session Stats: {json.dumps(session_summary)}"}
+        ],
+        max_tokens=150,
+        temperature=0.8
+    )
+    return response.choices[0].message.content.strip()
 
 
 @app.route("/healthz")

@@ -498,6 +498,7 @@ function workoutSession(initialModel) {
         aiCoachTip: "",
         aiRecommendation: null,
         aiRestSeconds: 0,
+        coachDebrief: "",
         saving: false,
         saved: false,
         saveError: "",
@@ -1656,6 +1657,7 @@ function workoutSession(initialModel) {
                     body: JSON.stringify(this.buildSessionPayload()),
                 });
                 this.saveResult = data;
+                this.coachDebrief = data.coach_debrief || "";
                 this.saved = true;
                 this.clearDraft();
             } catch (error) {

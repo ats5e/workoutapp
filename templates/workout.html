@@ -461,8 +461,13 @@
                     </template>
                     <template x-if="saved && saveResult">
                         <div class="space-y-4">
-                            <p class="text-xs font-mono tracking-widest uppercase text-emerald-400 border-l-2 border-emerald-400 pl-2">Data stored successfully in local vault.</p>
-                            <p class="text-sm text-slate-300" x-text="saveResult.coach_note"></p>
+                            <p class="text-xs font-mono tracking-widest uppercase text-emerald-400 border-l-2 border-emerald-400 pl-2">Data stored successfully.</p>
+                            
+                            <div class="rounded-sm border border-accent/20 bg-accent/5 p-3">
+                                <label class="text-[9px] font-bold uppercase tracking-[0.2em] text-accent font-mono block mb-2">AI Coach // Post-Session Debrief</label>
+                                <p class="text-sm text-white italic leading-relaxed" x-text="coachDebrief"></p>
+                            </div>
+
                             <template x-if="saveResult.achievements && saveResult.achievements.length">
                                 <div class="flex flex-wrap gap-2 pt-2 border-t border-white/5">
                                     <template x-for="achievement in saveResult.achievements" :key="achievement">
