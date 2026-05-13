@@ -39,11 +39,21 @@ VALID_PREFERENCE_STATUSES = {"neutral", "preferred", "avoid"}
 app = Flask(__name__)
 app.config['BASIC_AUTH_USERNAME'] = os.environ.get('APP_USERNAME')
 app.config['BASIC_AUTH_PASSWORD'] = os.environ.get('APP_PASSWORD')
-# Only force auth if credentials are provided in env
-if app.config['BASIC_AUTH_USERNAME'] and app.config['BASIC_AUTH_PASSWORD']:
-    app.config['BASIC_AUTH_FORCE'] = True
+# Auth is handled via before_request to allow /healthz to be public
+app.config['BASIC_AUTH_FORCE'] = False
 
 basic_auth = BasicAuth(app)
+
+@app.before_request
+def require_auth():
+    # Only enforce if credentials are set in environment
+    if not app.config.get('BASIC_AUTH_USERNAME') or not app.config.get('BASIC_AUTH_PASSWORD'):
+        return
+    # Exempt health check and static files if needed (though usually fine to protect static)
+    if request.endpoint in ['healthz', 'static']:
+        return
+    if not basic_auth.authenticate():
+        return basic_auth.challenge()
 
 CATEGORY_META = [
     {
