@@ -8,6 +8,7 @@ from pathlib import Path
 from pymongo import MongoClient
 from openai import OpenAI
 import certifi
+import httpx
 
 from flask import Flask, abort, g, jsonify, render_template, request
 from flask_basicauth import BasicAuth
@@ -264,7 +265,9 @@ def get_db():
 def get_openai_client():
     if "openai" not in g:
         api_key = os.environ.get("OPENAI_API_KEY", "")
-        g.openai = OpenAI(api_key=api_key)
+        # Use httpx with certifi for secure SSL verification on Render
+        http_client = httpx.Client(verify=certifi.where())
+        g.openai = OpenAI(api_key=api_key, http_client=http_client)
     return g.openai
 
 
@@ -1608,31 +1611,30 @@ def call_openai_coach(user_message, context, library, limit=5):
             
         personal_bests = current_personal_best_map()
 
-        system_prompt = f"""
-        You are an intelligent AI bodybuilding coach for the Iron Log app.
-        User Profile: {context['profile']['name']}
-        Training Goal: {context['profile']['training_goal']}
-        Focus Area: {context['profile']['focus_area']}
-        Current Readiness Score: {context['readiness']['score']}/100 ({context['readiness']['label']}).
-        
-        Based on the user's detailed recent sessions (which include weights and reps), personal bests, fatigue, and their current message, provide a coaching response and recommend up to {limit} exercise IDs for them to do next.
-        You MUST consider previous workouts and weight progressions to plan a workout based on their needs.
-        If the user asks to skip an exercise, you MUST NOT recommend it, and suggest another suitable one.
-        
-        Reply strictly in JSON format:
-        {{
-            "reply": "Your conversational, encouraging, and intelligent coaching message here.",
-            "recommended_exercise_ids": ["exercise-id-1", "exercise-id-2"]
-        }}
-        """
-        
+        system_prompt = f"""You are an Elite Strength & Conditioning Coach (Persona: GPT-5.5). 
+Your mission is to provide HIGH-FIDELITY, personalized coaching. 
+
+COACHING RULES:
+1. DATA DRIVEN: Analyze the 'Detailed Recent History' and 'Personal Bests' provided. Spot trends (e.g., 'You've plateaued on Squats' or 'Your volume is up 10%').
+2. PRESCRIPTIVE: If the user asks for a workout, don't be vague. Give them a full list of exercises, sets, reps, and target weights based on their history.
+3. PERSONALITY: Be professional, motivating, and authoritative. Use the user's name: {context['profile']['name']}.
+4. GOAL ORIENTED: Align every piece of advice with their goal: {context['profile']['training_goal']} and focus: {context['profile']['focus_area']}.
+5. READINESS: Adjust your intensity recommendation based on their Readiness: {context['readiness']['score']}/100.
+
+Reply strictly in JSON format:
+{{
+    "reply": "Your detailed, elite coaching response here. Be verbose and specific.",
+    "recommended_exercise_ids": ["exercise-id-1", "exercise-id-2"]
+}}"""
+
         available_exercises = [{"id": ex["id"], "name": ex["name"], "category": ex["category"]} 
                                for ex in library if ex.get("preference_status") != "avoid"]
         
         user_prompt = f"""
-        Detailed Recent History (Weights & Reps): {json.dumps(detailed_history)}
-        Personal Bests (Exercise ID -> Max Weight): {json.dumps(personal_bests)}
-        Available Exercises: {json.dumps(available_exercises)}
+        User Stats & Readiness: {json.dumps(context['readiness'])}
+        Detailed Recent History: {json.dumps(detailed_history)}
+        Personal Bests: {json.dumps(personal_bests)}
+        Available Exercise IDs: {json.dumps(available_exercises)}
         
         User Message: "{user_message}"
         """
@@ -1643,10 +1645,12 @@ def call_openai_coach(user_message, context, library, limit=5):
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
+            max_tokens=800,
+            temperature=0.8
         )
         data = json.loads(response.choices[0].message.content)
-        return data.get("reply", "I've logged that. Let's keep moving."), data.get("recommended_exercise_ids", [])
+        return data.get("reply", "Great work. Let's keep moving."), data.get("recommended_exercise_ids", [])
     except Exception as e:
         print(f"OpenAI Error: {e}")
         return "I had trouble processing that with AI, but I've updated your local memory.", []
