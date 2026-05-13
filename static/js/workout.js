@@ -254,6 +254,14 @@ function aiCoachView(initialModel) {
         sending: false,
         errorMessage: "",
         messages: [],
+        thinkingMessage: "Consulting Iron Log Engine...",
+        thinkingMessages: [
+            "Analyzing performance history...",
+            "Calculating optimal load...",
+            "Consulting progressive overload models...",
+            "Synthesizing coach's advice...",
+            "Finalizing training block...",
+        ],
 
         init() {
             this.messages = [
@@ -298,6 +306,13 @@ function aiCoachView(initialModel) {
             this.draft = "";
             this.sending = true;
             this.errorMessage = "";
+            let msgIdx = 0;
+            this.thinkingMessage = this.thinkingMessages[0];
+            const interval = setInterval(() => {
+                msgIdx = (msgIdx + 1) % this.thinkingMessages.length;
+                this.thinkingMessage = this.thinkingMessages[msgIdx];
+            }, 2500);
+
             try {
                 const data = await requestJson("/api/coach/chat", {
                     method: "POST",
@@ -319,6 +334,7 @@ function aiCoachView(initialModel) {
                 this.errorMessage = error.message;
             } finally {
                 this.sending = false;
+                clearInterval(interval);
             }
         },
     };

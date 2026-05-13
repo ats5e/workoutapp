@@ -96,7 +96,7 @@
                     @click="send()"
                     :disabled="sending || !draft.trim()"
                     class="w-full rounded-md bg-accent/10 border border-accent/50 text-accent hover:bg-accent hover:text-surface-300 px-5 py-3 font-mono font-bold tracking-widest uppercase transition-all disabled:opacity-50">
-                <span x-text="sending ? 'Thinking...' : 'Send to Coach'"></span>
+                <span x-text="sending ? thinkingMessage : 'Send to Coach'"></span>
             </button>
             <p class="text-xs text-rose-300 text-center font-mono" x-show="errorMessage" x-text="errorMessage"></p>
         </div>

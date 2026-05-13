@@ -1693,8 +1693,8 @@ def build_coach_reply(user_message):
             library=library,
             weekly_category_sets=build_weekly_category_sets(library),
         )["recommendations"]
-        if not reply_text or "trouble processing" in reply_text:
-            reply_text = "I've checked your history. Here are some local recommendations to keep the session moving."
+        if not reply_text:
+            reply_text = "I've analyzed your stats. Here are my elite recommendations for your next session."
 
     save_coach_message("assistant", reply_text, [exercise["id"] for exercise in recommendations[:4]])
 
