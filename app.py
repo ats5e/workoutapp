@@ -1973,22 +1973,43 @@ Available Library: {json.dumps(lib_summary)}
     if not client.api_key:
         return jsonify({"error": "OpenAI API key not configured"}), 500
 
+    model_name = os.environ.get("OPENAI_MODEL", "gpt-4o")
     try:
         response = client.chat.completions.create(
-            model=os.environ.get("OPENAI_MODEL", "gpt-5.5"),
+            model=model_name,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_msg}
             ],
             response_format={"type": "json_object"},
-            max_tokens=300,
+            max_tokens=600,
             temperature=0.7
         )
         content = response.choices[0].message.content
-        return jsonify(json.loads(content))
+        data = json.loads(content)
+        return jsonify(data)
     except Exception as e:
-        app.logger.error(f"OpenAI smart engine error: {e}")
-        return jsonify({"error": "AI Engine failed to generate recommendation"}), 500
+        app.logger.error(f"Smart Engine AI Error: {e}")
+        # Fallback to a simple recommendation if AI fails
+        basis_id = substitute_for_id or target_exercise_id or current_exercise_id
+        fallback = recommend_exercises(
+            after_id=basis_id,
+            done_ids=done_exercises,
+            limit=1,
+            library=library,
+            unavailable_ids=unavailable_ids
+        )
+        rec = fallback["recommendations"][0] if fallback["recommendations"] else None
+        if rec:
+            return jsonify({
+                "exercise_id": rec["id"],
+                "target_sets": rec["sets"],
+                "target_reps": rec["reps"],
+                "target_weight_kg": 0,
+                "target_rest_seconds": 90,
+                "coach_tip": "AI is temporarily unavailable. Using local algorithm to keep you moving."
+            })
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/sessions", methods=["POST"])
