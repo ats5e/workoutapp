@@ -1035,6 +1035,7 @@ function workoutSession(initialModel) {
                         unavailable_ids: this.sessionUnavailableIds,
                         target_exercise_id: options.targetExerciseId || null,
                         current_exercise_id: options.currentExerciseId || null,
+                        substitute_for_id: options.substitute_for_id || null,
                         readiness: this.readiness,
                     }),
                 });
