@@ -2020,7 +2020,6 @@ Keep it punchy, motivating, and elite. No markdown."""
 
 @app.route("/healthz")
 def healthz():
-    ensure_runtime_dirs()
     return {"status": "ok"}
 
 
