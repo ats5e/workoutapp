@@ -320,6 +320,51 @@ class IronLogAppTests(unittest.TestCase):
         self.assertEqual(save_response.status_code, 201)
         self.assertEqual(history["sessions"][0]["workout_name"], "Smart Gym Session")
 
+    def test_smart_engine_recommend_with_target_exercise(self):
+        mock_ai_response = MagicMock()
+        mock_ai_response.choices[0].message.content = '{"exercise_id": "seated-db-shoulder-press", "target_sets": 4, "target_reps": "8-10", "target_weight_kg": 22, "target_rest_seconds": 120, "coach_tip": "Increase by 2kg from last session."}'
+        self.mock_openai_client.chat.completions.create.return_value = mock_ai_response
+
+        response = self.client.post(
+            "/api/smart-engine/recommend",
+            json={
+                "target_exercise_id": "seated-db-shoulder-press",
+                "done_exercises": [],
+                "unavailable_ids": [],
+                "readiness": {"label": "Ready", "score": 80},
+            },
+        )
+        data = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data["exercise_id"], "seated-db-shoulder-press")
+        self.assertEqual(data["target_sets"], 4)
+        self.assertEqual(data["target_weight_kg"], 22)
+        self.assertEqual(data["target_rest_seconds"], 120)
+        self.assertIn("coach_tip", data)
+
+    def test_smart_engine_recommend_next_exercise(self):
+        mock_ai_response = MagicMock()
+        mock_ai_response.choices[0].message.content = '{"exercise_id": "machine-shoulder-press", "target_sets": 3, "target_reps": "10-12", "target_weight_kg": 30, "target_rest_seconds": 90, "coach_tip": "Good follow-up for shoulders."}'
+        self.mock_openai_client.chat.completions.create.return_value = mock_ai_response
+
+        response = self.client.post(
+            "/api/smart-engine/recommend",
+            json={
+                "current_exercise_id": "seated-db-shoulder-press",
+                "done_exercises": ["seated-db-shoulder-press"],
+                "unavailable_ids": [],
+                "readiness": {"label": "Ready", "score": 80},
+            },
+        )
+        data = response.get_json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data["exercise_id"], "machine-shoulder-press")
+        self.assertEqual(data["target_sets"], 3)
+        self.assertEqual(data["target_rest_seconds"], 90)
+        self.assertIn("coach_tip", data)
+
 
 if __name__ == "__main__":
     unittest.main()

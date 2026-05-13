@@ -1828,6 +1828,87 @@ def api_recommendations():
     )
 
 
+@app.route("/api/smart-engine/recommend", methods=["POST"])
+def api_smart_engine_recommend():
+    payload = request.get_json(silent=True) or {}
+    done_exercises = payload.get("done_exercises", [])
+    unavailable_ids = payload.get("unavailable_ids", [])
+    target_exercise_id = payload.get("target_exercise_id")
+    current_exercise_id = payload.get("current_exercise_id")
+    readiness = payload.get("readiness", {})
+
+    program = load_program()
+    library = build_exercise_library(program)
+    smart_context = build_smart_context(library)
+    profile = get_profile()
+    weekly_balance = smart_context.get("weekly_balance", [])
+    
+    available_library = [
+        ex for ex in library 
+        if ex.get("id") not in unavailable_ids 
+        and ex.get("id") not in done_exercises
+        and ex.get("preference_status") != "avoid"
+        and ex.get("is_available", True)
+    ]
+    
+    lib_summary = [
+        f"{ex.get('id')}: {ex.get('name')} (Cat: {ex.get('category_label')}, Default: {ex.get('sets')}x{ex.get('reps')})"
+        for ex in available_library
+    ]
+    
+    system_prompt = f"""You are an elite AI strength and conditioning coach inside the Iron Log app.
+Your task is to either assign target loads/reps for a SPECIFIC chosen exercise, OR suggest the NEXT best exercise for the user based on their current session and weekly balance.
+Respond ONLY with a valid JSON object matching this schema, with no markdown formatting or extra text:
+{{
+  "exercise_id": "the exact ID of the chosen exercise from the library",
+  "target_sets": (integer) recommended sets,
+  "target_reps": "(string) recommended reps (e.g. '8-10')",
+  "target_weight_kg": (number) recommended weight in kg based on their history. (use 0 for bodyweight),
+  "target_rest_seconds": (integer) recommended rest time in seconds (e.g. 90, 120),
+  "coach_tip": "(string) 1-2 short sentences explaining why you chose this weight/exercise."
+}}
+
+Context:
+User Profile Goals: {json.dumps(profile)}
+Weekly Category Balance (so far this week): {json.dumps(weekly_balance)}
+User Readiness today: {json.dumps(readiness.get('label'))}
+Already completed this session: {json.dumps(done_exercises)}
+Available Library: {json.dumps(lib_summary)}
+"""
+    
+    user_msg = "Please prescribe the next exercise and its targets."
+    if target_exercise_id:
+        user_msg = f"The user has explicitly chosen to do the exercise with ID: '{target_exercise_id}'. Please prescribe the target sets, reps, weight, and rest for this specific exercise."
+    elif current_exercise_id:
+        current_name = current_exercise_id
+        for ex in library:
+             if ex["id"] == current_exercise_id:
+                  current_name = ex["name"]
+                  break
+        user_msg = f"The user just finished or is currently doing the exercise: '{current_name}'. Suggest the next best exercise from the library."
+
+    client = get_openai_client()
+    if not client.api_key:
+        return jsonify({"error": "OpenAI API key not configured"}), 500
+
+    try:
+        response = client.chat.completions.create(
+            model=os.environ.get("OPENAI_MODEL", "gpt-5.5"),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_msg}
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=250,
+            temperature=0.7
+        )
+        content = response.choices[0].message.content
+        return jsonify(json.loads(content))
+    except Exception as e:
+        app.logger.error(f"OpenAI smart engine error: {e}")
+        return jsonify({"error": "AI Engine failed to generate recommendation"}), 500
+
+
 @app.route("/api/sessions", methods=["POST"])
 def api_sessions():
     payload = request.get_json(silent=True) or {}

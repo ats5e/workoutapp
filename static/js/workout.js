@@ -484,6 +484,10 @@ function workoutSession(initialModel) {
         draftKey: "",
         librarySelectedId: "",
         smartMessage: "",
+        isThinking: false,
+        aiCoachTip: "",
+        aiRecommendation: null,
+        aiRestSeconds: 0,
         saving: false,
         saved: false,
         saveError: "",
@@ -919,7 +923,7 @@ function workoutSession(initialModel) {
             this.persistDraft();
         },
 
-        markExerciseBusy(exerciseId) {
+        async markExerciseBusy(exerciseId) {
             const exercise = this.findLibraryExercise(exerciseId) || this.currentExercise;
             if (!exercise?.id || this.sessionUnavailableIds.includes(exercise.id)) return;
             this.historyStack.push(this.snapshotState());
@@ -933,24 +937,35 @@ function workoutSession(initialModel) {
                     safeNumber(this.workout.exercises[busyIndex].sets, 0) -
                         safeNumber(state.completedSets, 0)
                 );
-                state.recommendationReason = "Station was busy, so smart mode routed around it for this session.";
+                state.recommendationReason = "Equipment busy — AI routed around it.";
             }
-            this.librarySelectedId =
-                this.availableExerciseLibrary[0]?.id || this.currentExercise.id || "";
-
-            const basis = this.lastCompletedExercise() || this.currentExercise;
-            const next = this.buildSmartRecommendations(basis, 1)[0];
-            if (next && (wasCurrent || this.currentExerciseDone)) {
-                const nextIndex = this.ensureExerciseInWorkout(next);
-                this.exerciseIdx = nextIndex;
-                this.setIdx = this.nextSetIndexForExercise(nextIndex);
-                this.imageFailed = false;
-                this.librarySelectedId = next.id;
-                this.smartMessage = `${exercise.name} is busy now. Swapped in ${next.name} to keep this week balanced.`;
-            } else if (next) {
-                this.smartMessage = `${exercise.name} is busy now. Next best option is ${next.name}.`;
-            } else {
-                this.smartMessage = `${exercise.name} is busy now. No fresh substitute is available from your current library.`;
+            const aiData = await this.fetchAIRecommendation({ currentExerciseId: exercise.id });
+            if (aiData && (wasCurrent || this.currentExerciseDone)) {
+                const nextExercise = this.findLibraryExercise(aiData.exercise_id || aiData.id);
+                if (nextExercise) {
+                    const nextIndex = this.ensureExerciseInWorkout(nextExercise);
+                    this.applyAITargets(nextExercise, aiData);
+                    this.exerciseIdx = nextIndex;
+                    this.setIdx = this.nextSetIndexForExercise(nextIndex);
+                    this.imageFailed = false;
+                    this.librarySelectedId = nextExercise.id;
+                    this.smartMessage = `AI Coach: ${exercise.name} busy. ${aiData.ai_coach_tip || `Swapped to ${nextExercise.name}.`}`;
+                }
+            } else if (!aiData) {
+                this.librarySelectedId =
+                    this.availableExerciseLibrary[0]?.id || this.currentExercise.id || "";
+                const basis = this.lastCompletedExercise() || this.currentExercise;
+                const next = this.buildSmartRecommendations(basis, 1)[0];
+                if (next && (wasCurrent || this.currentExerciseDone)) {
+                    const nextIndex = this.ensureExerciseInWorkout(next);
+                    this.exerciseIdx = nextIndex;
+                    this.setIdx = this.nextSetIndexForExercise(nextIndex);
+                    this.imageFailed = false;
+                    this.librarySelectedId = next.id;
+                    this.smartMessage = `${exercise.name} busy. Swapped to ${next.name}.`;
+                } else {
+                    this.smartMessage = `${exercise.name} busy. No substitute available.`;
+                }
             }
             this.persistDraft();
         },
@@ -985,21 +1000,90 @@ function workoutSession(initialModel) {
             return queued;
         },
 
-        startWithExercise(exerciseId) {
+        async fetchAIRecommendation(options = {}) {
+            if (!this.workout.smart_mode) return null;
+            this.isThinking = true;
+            this.aiCoachTip = "";
+            const doneExerciseIds = this.workout.exercises
+                .map((ex, idx) => this.isExerciseComplete(idx) ? ex.id : null)
+                .filter(Boolean);
+            try {
+                const data = await requestJson("/api/smart-engine/recommend", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        done_exercises: doneExerciseIds,
+                        unavailable_ids: this.sessionUnavailableIds,
+                        target_exercise_id: options.targetExerciseId || null,
+                        current_exercise_id: options.currentExerciseId || null,
+                        readiness: this.readiness,
+                    }),
+                });
+                this.aiCoachTip = data.coach_tip || "";
+                this.aiRestSeconds = safeNumber(data.target_rest_seconds, 90);
+                if (data.exercise_id) {
+                    const exercise = this.findLibraryExercise(data.exercise_id);
+                    if (exercise) {
+                        this.aiRecommendation = {
+                            ...exercise,
+                            ai_sets: safeNumber(data.target_sets, exercise.sets),
+                            ai_reps: data.target_reps || exercise.reps,
+                            ai_weight_kg: safeNumber(data.target_weight_kg, 0),
+                            ai_rest_seconds: safeNumber(data.target_rest_seconds, 90),
+                            ai_coach_tip: data.coach_tip || "",
+                        };
+                        return this.aiRecommendation;
+                    }
+                }
+                return null;
+            } catch (error) {
+                this.smartMessage = "AI Engine unavailable. Using local algorithm.";
+                return null;
+            } finally {
+                this.isThinking = false;
+            }
+        },
+
+        applyAITargets(exercise, aiData) {
+            if (!aiData) return;
+            const index = this.ensureExerciseInWorkout(exercise);
+            const state = this.exerciseStates[index];
+            if (aiData.ai_weight_kg > 0) {
+                state.suggestedWeight = aiData.ai_weight_kg;
+                state.suggestedWeightLabel = formatWeight(exercise, aiData.ai_weight_kg);
+                state.workingWeight = aiData.ai_weight_kg;
+                state.workingWeightLabel = formatWeight(exercise, aiData.ai_weight_kg);
+            }
+            state.recommendationReason = aiData.ai_coach_tip || state.recommendationReason;
+            this.aiRestSeconds = aiData.ai_rest_seconds || 90;
+            if (aiData.ai_sets) {
+                this.workout.exercises[index].sets = aiData.ai_sets;
+            }
+            if (aiData.ai_reps) {
+                this.workout.exercises[index].reps = String(aiData.ai_reps);
+            }
+        },
+
+        async startWithExercise(exerciseId) {
             const exercise = this.findLibraryExercise(exerciseId);
             if (!exercise || exercise.preference_status === "avoid" || exercise.is_available === false) return;
             this.historyStack.push(this.snapshotState());
             const index = this.ensureExerciseInWorkout(exercise);
             this.selectExercise(index);
             this.librarySelectedId = exercise.id;
-            const queued = this.queueSmartRecommendations(exercise, 5);
-            this.smartMessage = queued.length
-                ? `Starting with ${exercise.name}. I queued ${queued.length} follow-up moves around it.`
-                : `Current exercise set to ${exercise.name}.`;
+            const aiData = await this.fetchAIRecommendation({ targetExerciseId: exerciseId });
+            if (aiData) {
+                this.applyAITargets(exercise, aiData);
+                this.smartMessage = `AI Coach: ${aiData.ai_coach_tip || `Starting ${exercise.name}.`}`;
+            } else {
+                const queued = this.queueSmartRecommendations(exercise, 5);
+                this.smartMessage = queued.length
+                    ? `Starting with ${exercise.name}. Queued ${queued.length} follow-ups.`
+                    : `Current exercise set to ${exercise.name}.`;
+            }
             this.persistDraft();
         },
 
-        logExerciseDone(exerciseId) {
+        async logExerciseDone(exerciseId) {
             const exercise = this.findLibraryExercise(exerciseId);
             if (!exercise) return;
             const index = this.ensureExerciseInWorkout(exercise);
@@ -1010,22 +1094,34 @@ function workoutSession(initialModel) {
                 safeNumber(exercise.sets, 0)
             );
             state.skippedSets = 0;
-            state.recommendationReason = "Logged as already completed in smart gym mode.";
+            state.recommendationReason = "Logged as completed.";
             this.exerciseIdx = index;
             this.setIdx = this.nextSetIndexForExercise(index);
             this.resting = false;
             clearInterval(this.restInterval);
-
-            const queued = this.queueSmartRecommendations(exercise, 5);
-            const next = queued[0];
-            if (next) {
-                const nextIndex = this.ensureExerciseInWorkout(next);
-                this.exerciseIdx = nextIndex;
-                this.setIdx = this.nextSetIndexForExercise(nextIndex);
-                this.librarySelectedId = next.id;
-                this.smartMessage = `After ${exercise.name}, next best option is ${next.name}.`;
+            const aiData = await this.fetchAIRecommendation({ currentExerciseId: exerciseId });
+            if (aiData) {
+                const nextExercise = this.findLibraryExercise(aiData.exercise_id || aiData.id);
+                if (nextExercise) {
+                    const nextIndex = this.ensureExerciseInWorkout(nextExercise);
+                    this.applyAITargets(nextExercise, aiData);
+                    this.exerciseIdx = nextIndex;
+                    this.setIdx = this.nextSetIndexForExercise(nextIndex);
+                    this.librarySelectedId = nextExercise.id;
+                    this.smartMessage = `AI Coach: ${aiData.ai_coach_tip || `Next up: ${nextExercise.name}.`}`;
+                }
             } else {
-                this.smartMessage = `${exercise.name} is logged. No fresh recommendation is left in the library.`;
+                const queued = this.queueSmartRecommendations(exercise, 5);
+                const next = queued[0];
+                if (next) {
+                    const nextIndex = this.ensureExerciseInWorkout(next);
+                    this.exerciseIdx = nextIndex;
+                    this.setIdx = this.nextSetIndexForExercise(nextIndex);
+                    this.librarySelectedId = next.id;
+                    this.smartMessage = `After ${exercise.name}, next: ${next.name}.`;
+                } else {
+                    this.smartMessage = `${exercise.name} logged. Library exhausted.`;
+                }
             }
             this.imageFailed = false;
             this.persistDraft();
@@ -1132,11 +1228,16 @@ function workoutSession(initialModel) {
         },
 
         get primarySmartRecommendation() {
+            if (this.aiRecommendation) return this.aiRecommendation;
             return this.smartRecommendations[0] || null;
         },
 
         get alternateSmartRecommendations() {
-            return this.smartRecommendations.slice(1, 5);
+            const recs = this.smartRecommendations;
+            if (this.aiRecommendation) {
+                return recs.filter(r => r.id !== this.aiRecommendation.id).slice(0, 4);
+            }
+            return recs.slice(1, 5);
         },
 
         exerciseOverviewClass(index) {
@@ -1280,7 +1381,7 @@ function workoutSession(initialModel) {
                 return;
             }
 
-            const rest = this.currentExercise.rest_seconds || 90;
+            const rest = this.aiRestSeconds || this.currentExercise.rest_seconds || 90;
             this.startRest(rest);
             this.persistDraft();
         },
@@ -1326,10 +1427,27 @@ function workoutSession(initialModel) {
             this.persistDraft();
         },
 
-        advance() {
+        async advance() {
             if (!this.currentExerciseDone) {
                 this.setIdx = this.nextSetIndexForExercise(this.exerciseIdx);
                 return;
+            }
+            if (this.workout.smart_mode) {
+                const aiData = await this.fetchAIRecommendation({ currentExerciseId: this.currentExercise.id });
+                if (aiData) {
+                    const nextExercise = this.findLibraryExercise(aiData.exercise_id || aiData.id);
+                    if (nextExercise) {
+                        const nextIndex = this.ensureExerciseInWorkout(nextExercise);
+                        this.applyAITargets(nextExercise, aiData);
+                        this.exerciseIdx = nextIndex;
+                        this.setIdx = this.nextSetIndexForExercise(nextIndex);
+                        this.librarySelectedId = nextExercise.id;
+                        this.imageFailed = false;
+                        this.smartMessage = `AI Coach: ${aiData.ai_coach_tip || `Next up: ${nextExercise.name}.`}`;
+                        this.persistDraft();
+                        return;
+                    }
+                }
             }
             const nextIndex = this.findNextPendingExerciseIndex(this.exerciseIdx + 1);
             if (nextIndex === -1) {
