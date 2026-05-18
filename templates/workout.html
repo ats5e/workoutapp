@@ -248,28 +248,43 @@
 
                 <div class="space-y-1.5">
                     <template x-for="(exercise, index) in workout.exercises" :key="exercise.id">
-                        <button type="button"
-                                @click="selectExercise(index)"
-                                class="w-full rounded-md border p-3 text-left transition-all active:scale-[0.99] group relative overflow-hidden"
-                                :class="exerciseOverviewClass(index)">
-                            <div class="flex items-start justify-between gap-3 relative z-10">
-                                <div class="min-w-0">
-                                    <p class="font-bold leading-tight text-white group-hover:text-accent transition-colors text-sm" x-text="exercise.name"></p>
-                                    <p class="mt-1 text-[10px] font-mono tracking-wider text-slate-400">
-                                        <span x-text="`${exercise.sets} x ${exercise.reps}`"></span>
-                                        <span class="opacity-50"> // </span>
-                                        <span x-text="`Target ${exerciseWeightLabel(index)}`"></span>
-                                    </p>
+                        <div class="rounded-md border transition-all group relative overflow-hidden"
+                             :class="exerciseOverviewClass(index)">
+                            <button type="button"
+                                    @click="selectExercise(index)"
+                                    class="w-full p-3 text-left active:scale-[0.99]">
+                                <div class="flex items-start justify-between gap-3 relative z-10">
+                                    <div class="min-w-0">
+                                        <p class="font-bold leading-tight text-white group-hover:text-accent transition-colors text-sm" x-text="exercise.name"></p>
+                                        <p class="mt-1 text-[10px] font-mono tracking-wider text-slate-400">
+                                            <span x-text="`${exercise.sets} x ${exercise.reps}`"></span>
+                                            <span class="opacity-50"> // </span>
+                                            <span x-text="`Target ${exerciseWeightLabel(index)}`"></span>
+                                        </p>
+                                    </div>
+                                    <span class="flex-shrink-0 text-[9px] font-mono font-bold tracking-widest px-1.5 py-0.5 border rounded-sm transition-colors uppercase" 
+                                          :class="index === exerciseIdx ? 'bg-accent text-surface-300 border-accent' : 'bg-surface-200 border-white/10 text-slate-500 group-hover:border-accent/30'" 
+                                          x-text="exerciseProgressLabel(index)"></span>
                                 </div>
-                                <span class="flex-shrink-0 text-[9px] font-mono font-bold tracking-widest px-1.5 py-0.5 border rounded-sm transition-colors uppercase" 
-                                      :class="index === exerciseIdx ? 'bg-accent text-surface-300 border-accent' : 'bg-surface-200 border-white/10 text-slate-500 group-hover:border-accent/30'" 
-                                      x-text="exerciseProgressLabel(index)"></span>
+                                <div class="mt-2 h-[2px] w-full bg-surface-200 overflow-hidden opacity-50">
+                                    <div class="h-full bg-accent transition-all duration-300" :style="`width: ${exerciseProgressPct(index)}%`"></div>
+                                </div>
+                            </button>
+                            <div class="grid grid-cols-2 gap-2 border-t border-white/5 px-3 pb-3 pt-2">
+                                <button type="button"
+                                        @click.stop="substituteExercise(index)"
+                                        :disabled="regeneratingExerciseIndex !== null || skippingExerciseIndex !== null"
+                                        class="rounded-sm border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[9px] font-mono font-bold uppercase tracking-widest text-amber-300 transition-colors hover:bg-amber-500/20 disabled:opacity-40">
+                                    <span x-text="regeneratingExerciseIndex === index ? 'Finding...' : 'Regenerate'"></span>
+                                </button>
+                                <button type="button"
+                                        @click.stop="skipExercise(index)"
+                                        :disabled="isExerciseComplete(index) || regeneratingExerciseIndex !== null || skippingExerciseIndex !== null"
+                                        class="rounded-sm border border-white/15 bg-white/5 px-2 py-1.5 text-[9px] font-mono font-bold uppercase tracking-widest text-slate-300 transition-colors hover:bg-white/10 disabled:opacity-40">
+                                    <span x-text="skippingExerciseIndex === index ? 'Skipping...' : 'Skip'"></span>
+                                </button>
                             </div>
-                            <!-- Mini Progress Bar inside the button -->
-                            <div class="mt-2 h-[2px] w-full bg-surface-200 overflow-hidden opacity-50">
-                                <div class="h-full bg-accent transition-all duration-300" :style="`width: ${exerciseProgressPct(index)}%`"></div>
-                            </div>
-                        </button>
+                        </div>
                     </template>
                 </div>
             </div>
@@ -333,9 +348,10 @@
                         
                         <button type="button"
                                 @click="substituteExercise(exerciseIdx)"
-                                class="ml-auto rounded-sm border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-amber-500 hover:bg-amber-500/20 transition-all flex items-center gap-1.5 shadow-[0_0_10px_rgba(245,158,11,0.1)]">
+                                :disabled="regeneratingExerciseIndex !== null || skippingExerciseIndex !== null"
+                                class="ml-auto rounded-sm border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-amber-500 hover:bg-amber-500/20 transition-all flex items-center gap-1.5 shadow-[0_0_10px_rgba(245,158,11,0.1)] disabled:opacity-40">
                             <svg viewBox="0 0 24 24" fill="none" class="h-3 w-3" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99"></path></svg>
-                            Regenerate
+                            <span x-text="regeneratingExerciseIndex === exerciseIdx ? 'Finding...' : 'Regenerate'"></span>
                         </button>
                     </div>
 
@@ -420,9 +436,9 @@
                             Undo Last
                         </button>
                         <button @click="skipCurrentExercise()"
-                                :disabled="currentExerciseDone"
+                                :disabled="currentExerciseDone || regeneratingExerciseIndex !== null || skippingExerciseIndex !== null"
                                 class="rounded-sm border border-rose-500/20 bg-rose-500/5 hover:bg-rose-500/10 hover:border-rose-500/50 px-3 py-3 text-[10px] font-mono tracking-widest uppercase font-bold text-rose-300 transition-all disabled:opacity-30">
-                            Skip Move
+                            <span x-text="skippingExerciseIndex === exerciseIdx ? 'Skipping...' : 'Skip Move'"></span>
                         </button>
                         <button @click="skipSet()"
                                 :disabled="currentExerciseDone"
@@ -504,5 +520,5 @@
     </template>
 </div>
 
-<script src="{{ url_for('static', filename='js/workout.js', v=9) }}"></script>
+<script src="{{ url_for('static', filename='js/workout.js', v=10) }}"></script>
 {% endblock %}

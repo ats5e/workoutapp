@@ -638,6 +638,8 @@ function workoutSession(initialModel) {
         saved: false,
         saveError: "",
         saveResult: null,
+        regeneratingExerciseIndex: null,
+        skippingExerciseIndex: null,
         walk: {
             active: false,
             paused: false,
@@ -1346,8 +1348,9 @@ function workoutSession(initialModel) {
 
         async substituteExercise(index) {
             const exercise = this.workout.exercises[index];
-            if (!exercise) return;
+            if (!exercise || this.regeneratingExerciseIndex !== null) return;
             this.historyStack.push(this.snapshotState());
+            this.regeneratingExerciseIndex = index;
 
             if (this.serverBacked) {
                 this.smartMessage = `Finding a replacement for ${exercise.name}...`;
@@ -1365,10 +1368,11 @@ function workoutSession(initialModel) {
                     );
                     const replacement = data.exercise;
                     if (!replacement) throw new Error("No replacement returned");
-                    this.workout.exercises[index] = replacement;
-                    this.exerciseStates[index] = this.buildExerciseState(replacement);
+                    this.workout.exercises.splice(index, 1, replacement);
+                    this.exerciseStates.splice(index, 1, this.buildExerciseState(replacement));
                     if (this.exerciseIdx === index) {
                         this.setIdx = 0;
+                        this.imageFailed = false;
                         this.syncCurrentRepsFromRecord();
                     }
                     this.smartMessage = `Regenerated ${exercise.name} as ${replacement.name}.`;
@@ -1378,31 +1382,35 @@ function workoutSession(initialModel) {
                     this.smartMessage = error.message;
                     this.persistDraft();
                     return;
+                } finally {
+                    this.regeneratingExerciseIndex = null;
                 }
             }
 
             this.smartMessage = `AI Coach is finding a substitution for ${exercise.name}...`;
-            const aiData = await this.fetchAIRecommendation({ substitute_for_id: exercise.id });
-            
-            if (aiData) {
-                const newExercise = this.findLibraryExercise(aiData.exercise_id || aiData.id);
-                if (newExercise) {
-                    // Update the exercise in the list
-                    this.workout.exercises[index] = newExercise;
-                    // Reset its state
-                    this.exerciseStates[index] = this.buildExerciseState(newExercise);
-                    // Apply AI targets
-                    this.applyAITargets(newExercise, aiData);
-                    this.smartMessage = `Substituted ${exercise.name} with ${newExercise.name}. ${aiData.ai_coach_tip || ''}`;
-                    if (this.exerciseIdx === index) {
-                        this.setIdx = 0;
-                        this.syncCurrentRepsFromRecord();
+            try {
+                const aiData = await this.fetchAIRecommendation({ substitute_for_id: exercise.id });
+                
+                if (aiData) {
+                    const newExercise = this.findLibraryExercise(aiData.exercise_id || aiData.id);
+                    if (newExercise) {
+                        this.workout.exercises.splice(index, 1, newExercise);
+                        this.exerciseStates.splice(index, 1, this.buildExerciseState(newExercise));
+                        this.applyAITargets(newExercise, aiData);
+                        this.smartMessage = `Substituted ${exercise.name} with ${newExercise.name}. ${aiData.ai_coach_tip || ''}`;
+                        if (this.exerciseIdx === index) {
+                            this.setIdx = 0;
+                            this.imageFailed = false;
+                            this.syncCurrentRepsFromRecord();
+                        }
                     }
+                } else {
+                    this.smartMessage = "AI Coach could not find a suitable substitution right now.";
                 }
-            } else {
-                this.smartMessage = "AI Coach could not find a suitable substitution right now.";
+                this.persistDraft();
+            } finally {
+                this.regeneratingExerciseIndex = null;
             }
-            this.persistDraft();
         },
 
         recommendationScore(after, candidate, index) {
@@ -1787,14 +1795,18 @@ function workoutSession(initialModel) {
             this.persistDraft();
         },
 
-        async skipCurrentExercise() {
-            if (this.currentExerciseDone) return;
+        async skipExercise(index) {
+            const exercise = this.workout.exercises[index];
+            const state = this.exerciseStates[index];
+            if (!exercise || !state || this.isExerciseComplete(index)) return;
+            if (this.skippingExerciseIndex !== null) return;
             this.historyStack.push(this.snapshotState());
+            this.skippingExerciseIndex = index;
             const remaining =
-                safeNumber(this.currentExercise.sets, 0) -
-                safeNumber(this.currentExerciseState.completedSets, 0);
-            this.currentExerciseState.skippedSets = Math.max(
-                safeNumber(this.currentExerciseState.skippedSets, 0),
+                safeNumber(exercise.sets, 0) -
+                safeNumber(state.completedSets, 0);
+            state.skippedSets = Math.max(
+                safeNumber(state.skippedSets, 0),
                 remaining
             );
             if (this.serverBacked) {
@@ -1804,8 +1816,8 @@ function workoutSession(initialModel) {
                         {
                             method: "POST",
                             body: JSON.stringify({
-                                session_exercise_id: this.currentExercise.session_exercise_id,
-                                exercise_id: this.currentExercise.id,
+                                session_exercise_id: exercise.session_exercise_id,
+                                exercise_id: exercise.id,
                             }),
                         }
                     );
@@ -1813,12 +1825,17 @@ function workoutSession(initialModel) {
                     this.saveError = error.message;
                 }
             }
+            this.skippingExerciseIndex = null;
             if (this.allSetsProcessed) {
                 this.nextStage();
-            } else {
+            } else if (index === this.exerciseIdx) {
                 await this.advance();
             }
             this.persistDraft();
+        },
+
+        async skipCurrentExercise() {
+            await this.skipExercise(this.exerciseIdx);
         },
 
         prevSet() {

@@ -346,6 +346,8 @@ class IronLogAppTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"Actual Reps This Set", page.data)
         self.assertIn(b"Regenerate", page.data)
+        self.assertIn(b"substituteExercise(index)", page.data)
+        self.assertIn(b"skipExercise(index)", page.data)
 
     def test_home_ignores_active_generated_sessions_in_latest_summary(self):
         started = self.client.post(
