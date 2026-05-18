@@ -320,6 +320,203 @@ class IronLogAppTests(unittest.TestCase):
         self.assertEqual(save_response.status_code, 201)
         self.assertEqual(history["sessions"][0]["workout_name"], "Smart Gym Session")
 
+    def test_generated_session_starts_from_selected_exercise(self):
+        response = self.client.post(
+            "/api/sessions/start",
+            json={"starting_exercise_id": "barbell-bench-press"},
+        )
+        data = response.get_json()
+        session = data["session"]
+        page = self.client.get(data["session_url"])
+        total_sets = sum(
+            len(exercise["sets"]) for exercise in session["session_exercises"]
+        )
+        exercise_ids = [
+            exercise["exercise_id"] for exercise in session["session_exercises"]
+        ]
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(session["status"], "active")
+        self.assertEqual(session["source"], "generated")
+        self.assertEqual(session["starting_exercise_id"], "barbell-bench-press")
+        self.assertEqual(exercise_ids[0], "barbell-bench-press")
+        self.assertGreaterEqual(total_sets, 12)
+        self.assertLessEqual(total_sets, 18)
+        self.assertNotIn("cable-rope-rear-delt-row", exercise_ids)
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Actual Reps This Set", page.data)
+        self.assertIn(b"Regenerate", page.data)
+
+    def test_home_ignores_active_generated_sessions_in_latest_summary(self):
+        started = self.client.post(
+            "/api/sessions/start",
+            json={"starting_exercise_id": "barbell-bench-press"},
+        )
+        home = self.client.get("/")
+
+        self.assertEqual(started.status_code, 201)
+        self.assertEqual(home.status_code, 200)
+        self.assertIn(b"What are you starting with today?", home.data)
+
+    @patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"})
+    def test_generated_session_uses_openai_when_configured(self):
+        mock_ai_response = MagicMock()
+        mock_ai_response.choices[0].message.content = (
+            '{"exercise_ids": ["barbell-bench-press", "incline-db-press", '
+            '"cable-fly", "tricep-rope-pushdown"], '
+            '"coach_tip": "AI selected a push-focused route."}'
+        )
+        self.mock_openai_client.chat.completions.create.return_value = mock_ai_response
+
+        response = self.client.post(
+            "/api/sessions/start",
+            json={"starting_exercise_id": "barbell-bench-press"},
+        )
+        session = response.get_json()["session"]
+        exercise_ids = [
+            exercise["exercise_id"] for exercise in session["session_exercises"]
+        ]
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(session["generation_engine"], "openai")
+        self.assertEqual(session["generation_note"], "AI selected a push-focused route.")
+        self.assertEqual(
+            exercise_ids,
+            [
+                "barbell-bench-press",
+                "incline-db-press",
+                "cable-fly",
+                "tricep-rope-pushdown",
+            ],
+        )
+
+    def test_generated_session_patches_sets_and_skips_exercises(self):
+        started = self.client.post(
+            "/api/sessions/start",
+            json={"starting_exercise_id": "barbell-bench-press"},
+        ).get_json()["session"]
+        first_exercise = started["session_exercises"][0]
+        first_set = first_exercise["sets"][0]
+
+        patch_response = self.client.patch(
+            f"/api/sessions/{started['id']}/sets/{first_set['id']}",
+            json={"actual_weight": 52.5, "actual_reps": 8, "completed": True},
+        )
+        skip_response = self.client.post(
+            f"/api/sessions/{started['id']}/skip-exercise",
+            json={"session_exercise_id": started["session_exercises"][1]["id"]},
+        )
+        row = self.mock_mongo_client.ironlog.sessions.find_one({"_id": started["id"]})
+
+        self.assertEqual(patch_response.status_code, 200)
+        self.assertEqual(skip_response.status_code, 200)
+        self.assertTrue(row["session_exercises"][0]["sets"][0]["completed"])
+        self.assertEqual(row["session_exercises"][0]["sets"][0]["actual_reps"], 8)
+        self.assertTrue(row["session_exercises"][1]["skipped"])
+
+    def test_generated_session_regenerates_with_exclusions(self):
+        started = self.client.post(
+            "/api/sessions/start",
+            json={"starting_exercise_id": "barbell-bench-press"},
+        ).get_json()["session"]
+        original = started["session_exercises"][1]
+        response = self.client.post(
+            f"/api/sessions/{started['id']}/regenerate-exercise",
+            json={"session_exercise_id": original["id"]},
+        )
+        data = response.get_json()
+        row = self.mock_mongo_client.ironlog.sessions.find_one({"_id": started["id"]})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotEqual(data["session_exercise"]["exercise_id"], original["exercise_id"])
+        self.assertTrue(data["session_exercise"]["was_regenerated"])
+        self.assertEqual(data["session_exercise"]["replaced_exercise_id"], original["exercise_id"])
+        self.assertIn(original["exercise_id"], row["excluded_exercise_ids"])
+
+    def test_weight_suggestion_progresses_or_repeats_from_history(self):
+        self.client.post(
+            "/api/sessions",
+            json={
+                "workout_id": "day-1-push",
+                "completed_at": "2026-05-12T09:00:00",
+                "exercise_logs": [
+                    {
+                        "exercise_id": "barbell-bench-press",
+                        "exercise_name": "Barbell Bench Press",
+                        "reps": "8",
+                        "target_sets": 4,
+                        "completed_sets": 4,
+                        "skipped_sets": 0,
+                        "working_weight": 50,
+                        "working_weight_label": "50 kg",
+                    }
+                ],
+            },
+        )
+        progressed = self.client.get(
+            "/api/exercises/suggest-weight?exercise_id=barbell-bench-press"
+        ).get_json()
+        self.client.post(
+            "/api/sessions",
+            json={
+                "workout_id": "day-1-push",
+                "completed_at": "2026-05-13T09:00:00",
+                "exercise_logs": [
+                    {
+                        "exercise_id": "barbell-bench-press",
+                        "exercise_name": "Barbell Bench Press",
+                        "reps": "8",
+                        "target_sets": 4,
+                        "completed_sets": 2,
+                        "skipped_sets": 2,
+                        "working_weight": 55,
+                        "working_weight_label": "55 kg",
+                    }
+                ],
+            },
+        )
+        repeated = self.client.get(
+            "/api/exercises/suggest-weight?exercise_id=barbell-bench-press"
+        ).get_json()
+
+        self.assertEqual(progressed["suggested_weight"], 52.5)
+        self.assertEqual(progressed["source"], "progressed")
+        self.assertEqual(repeated["suggested_weight"], 55)
+        self.assertEqual(repeated["source"], "repeat")
+
+    def test_generated_session_respects_recent_recovery_categories(self):
+        self.client.post(
+            "/api/sessions",
+            json={
+                "workout_id": "day-1-push",
+                "completed_at": app.now_iso(),
+                "exercise_logs": [
+                    {
+                        "exercise_id": "barbell-bench-press",
+                        "exercise_name": "Barbell Bench Press",
+                        "reps": "8",
+                        "target_sets": 4,
+                        "completed_sets": 4,
+                        "skipped_sets": 0,
+                        "working_weight": 50,
+                        "working_weight_label": "50 kg",
+                    }
+                ],
+            },
+        )
+        session = self.client.post(
+            "/api/sessions/start",
+            json={"starting_exercise_id": "wide-grip-lat-pulldown"},
+        ).get_json()["session"]
+        library = {exercise["id"]: exercise for exercise in app.build_exercise_library()}
+        accessory_categories = [
+            library[item["exercise_id"]]["category"]
+            for item in session["session_exercises"][1:]
+        ]
+
+        self.assertIn("push", session["recovery_excluded_categories"])
+        self.assertNotIn("push", accessory_categories)
+
     def test_smart_engine_recommend_with_target_exercise(self):
         mock_ai_response = MagicMock()
         mock_ai_response.choices[0].message.content = '{"exercise_id": "seated-db-shoulder-press", "target_sets": 4, "target_reps": "8-10", "target_weight_kg": 22, "target_rest_seconds": 120, "coach_tip": "Increase by 2kg from last session."}'

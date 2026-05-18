@@ -1,8 +1,8 @@
-const CACHE_NAME = "iron-log-v6";
+const CACHE_NAME = "iron-log-v9";
 const CORE_ASSETS = [
     "/",
-    "/static/css/styles.css",
-    "/static/js/workout.js",
+    "/static/css/styles.css?v=9",
+    "/static/js/workout.js?v=9",
     "/static/manifest.webmanifest",
     "/static/icons/app-icon.svg",
 ];

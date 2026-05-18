@@ -6,3 +6,4 @@ python-dotenv==1.0.1
 certifi
 Flask-BasicAuth==0.2.0
 dnspython==2.7.0
+mongomock==4.3.0

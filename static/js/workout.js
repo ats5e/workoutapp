@@ -62,6 +62,12 @@ function formatWeight(exercise, computed) {
     return fmt.replace("{w}", String(computed).replace(/\.0$/, ""));
 }
 
+function parseRepTarget(value) {
+    const matches = String(value || "").match(/\d+(?:\.\d+)?/g) || [];
+    if (!matches.length) return 0;
+    return Math.max(...matches.map((item) => Number(item)));
+}
+
 function roundToStep(value, step) {
     if (!step || step <= 0) {
         return Math.round(value * 2) / 2;
@@ -241,6 +247,113 @@ function homeView(initialDashboard) {
                 this.errorMessage = error.message;
             } finally {
                 this.savingCheckin = false;
+            }
+        },
+    };
+}
+
+function startView(initialModel) {
+    return {
+        model: deepCopy(initialModel),
+        query: "",
+        selectedExerciseId: "",
+        starting: false,
+        errorMessage: "",
+
+        init() {
+            this.ensureSelectedExercise();
+            this.$watch("query", () => this.ensureSelectedExercise());
+            window.requestAnimationFrame(() => this.$refs.search?.focus());
+        },
+
+        get exercises() {
+            return (this.model.exercises || []).filter(
+                (exercise) =>
+                    exercise.preference_status !== "avoid" &&
+                    exercise.is_available !== false
+            );
+        },
+
+        get readinessLabel() {
+            return this.model.readiness?.label || "Open";
+        },
+
+        get filteredExercises() {
+            const query = this.query.trim().toLowerCase();
+            const matches = this.exercises.filter((exercise) => {
+                if (!query) return true;
+                const searchable = [
+                    exercise.name,
+                    exercise.id,
+                    exercise.category_label,
+                    exercise.movement_pattern,
+                    exercise.equipment,
+                    exercise.muscle_focus,
+                ]
+                    .filter(Boolean)
+                    .join(" ")
+                    .toLowerCase();
+                return searchable.includes(query);
+            });
+            return matches.sort((a, b) => {
+                const preferredDelta =
+                    (b.preference_status === "preferred" ? 1 : 0) -
+                    (a.preference_status === "preferred" ? 1 : 0);
+                if (preferredDelta) return preferredDelta;
+                return a.name.localeCompare(b.name);
+            });
+        },
+
+        get selectedExercise() {
+            return (
+                this.filteredExercises.find(
+                    (exercise) => exercise.id === this.selectedExerciseId
+                ) ||
+                this.filteredExercises[0] ||
+                null
+            );
+        },
+
+        ensureSelectedExercise() {
+            if (
+                !this.selectedExerciseId ||
+                !this.filteredExercises.some(
+                    (exercise) => exercise.id === this.selectedExerciseId
+                )
+            ) {
+                this.selectedExerciseId = this.filteredExercises[0]?.id || "";
+            }
+        },
+
+        async startExercise(exercise) {
+            if (!exercise?.id || this.starting) return;
+            this.starting = true;
+            this.errorMessage = "";
+            try {
+                const data = await requestJson("/api/sessions/start", {
+                    method: "POST",
+                    body: JSON.stringify({ starting_exercise_id: exercise.id }),
+                });
+                window.location.href = data.session_url;
+            } catch (error) {
+                this.errorMessage = error.message;
+                this.starting = false;
+            }
+        },
+
+        startSelectedExercise() {
+            if (this.selectedExercise) {
+                this.startExercise(this.selectedExercise);
+            }
+        },
+
+        startFirstMatch() {
+            const exact = this.exercises.find(
+                (exercise) => exercise.name.toLowerCase() === this.query.trim().toLowerCase()
+            );
+            const exercise = exact || this.filteredExercises[0];
+            if (exercise) {
+                this.startExercise(exercise);
             }
         },
     };
@@ -476,6 +589,8 @@ function workoutSession(initialModel) {
         readiness: deepCopy(initialModel.readiness || {}),
         profile: deepCopy(initialModel.profile || {}),
         latestSession: initialModel.latest_session || null,
+        activeSessionId: initialModel.active_session_id || "",
+        serverBacked: Boolean(initialModel.active_session_id),
         weeklyCategorySets: deepCopy(initialModel.smart_context?.weekly_category_sets || {}),
         sessionUnavailableIds: [],
         stage: "strength",
@@ -533,6 +648,9 @@ function workoutSession(initialModel) {
         },
 
         buildDraftKey() {
+            if (this.activeSessionId) {
+                return `${IRONLOG_KEYS.sessionDraftPrefix}${this.activeSessionId}`;
+            }
             if (!this.workout.smart_mode) {
                 return `${IRONLOG_KEYS.sessionDraftPrefix}${this.workout.id}`;
             }
@@ -543,6 +661,7 @@ function workoutSession(initialModel) {
         init() {
             this.week = ironlogWeek();
             this.sessionId =
+                this.activeSessionId ||
                 (window.crypto && window.crypto.randomUUID && window.crypto.randomUUID()) ||
                 `session-${Date.now()}`;
             this.draftKey = this.buildDraftKey();
@@ -598,6 +717,7 @@ function workoutSession(initialModel) {
                 if (currentIndex !== -1) {
                     this.exerciseIdx = currentIndex;
                     this.setIdx = this.nextSetIndexForExercise(currentIndex);
+                    this.syncCurrentRepsFromRecord();
                     return;
                 }
             }
@@ -606,10 +726,21 @@ function workoutSession(initialModel) {
             if (nextIndex !== -1) {
                 this.exerciseIdx = nextIndex;
                 this.setIdx = this.nextSetIndexForExercise(nextIndex);
+                this.syncCurrentRepsFromRecord();
             }
         },
 
         buildSuggestion(exercise) {
+            if (exercise?.suggestion && typeof exercise.suggestion.suggested_weight === "number") {
+                const suggested = exercise.suggestion.suggested_weight;
+                return {
+                    planWeight: suggested,
+                    suggestedWeight: suggested,
+                    reason: exercise.suggestion.reason || "Loaded from your history.",
+                    step: exercise.progression_kg || exercise.suggestion.increment || 0.5,
+                };
+            }
+
             const planWeight = computeExerciseWeight(exercise, this.week);
             const lastWeight =
                 typeof exercise.last_logged_weight === "number"
@@ -666,6 +797,37 @@ function workoutSession(initialModel) {
 
         buildExerciseState(exercise) {
             const suggestion = this.buildSuggestion(exercise);
+            const sessionSets = Array.isArray(exercise.session_sets) ? exercise.session_sets : [];
+            const targetSetCount = safeNumber(exercise.sets, sessionSets.length || 0);
+            const setRecords = sessionSets.length
+                ? sessionSets.map((item, index) => ({
+                      id: item.id || "",
+                      order: item.order || index + 1,
+                      suggestedWeight:
+                          typeof item.suggested_weight === "number"
+                              ? item.suggested_weight
+                              : suggestion.suggestedWeight,
+                      actualWeight:
+                          typeof item.actual_weight === "number"
+                              ? item.actual_weight
+                              : suggestion.suggestedWeight,
+                      suggestedReps: item.suggested_reps || exercise.reps,
+                      actualReps:
+                          typeof item.actual_reps === "number"
+                              ? item.actual_reps
+                              : parseRepTarget(item.suggested_reps || exercise.reps),
+                      completed: Boolean(item.completed),
+                  }))
+                : Array.from({ length: targetSetCount }, (_item, index) => ({
+                      id: "",
+                      order: index + 1,
+                      suggestedWeight: suggestion.suggestedWeight,
+                      actualWeight: suggestion.suggestedWeight,
+                      suggestedReps: exercise.reps,
+                      actualReps: parseRepTarget(exercise.reps),
+                      completed: false,
+                  }));
+            const completedSets = setRecords.filter((item) => item.completed).length;
             return {
                 suggestedWeight: suggestion.suggestedWeight,
                 suggestedWeightLabel: formatWeight(exercise, suggestion.suggestedWeight),
@@ -675,8 +837,10 @@ function workoutSession(initialModel) {
                 workingWeightLabel: formatWeight(exercise, suggestion.suggestedWeight),
                 recommendationReason: suggestion.reason,
                 step: suggestion.step,
-                completedSets: 0,
-                skippedSets: 0,
+                setRecords,
+                currentActualReps: parseRepTarget(exercise.reps),
+                completedSets,
+                skippedSets: exercise.skipped ? Math.max(0, targetSetCount - completedSets) : 0,
                 notes: "",
             };
         },
@@ -841,6 +1005,17 @@ function workoutSession(initialModel) {
                 this.currentExerciseState.suggestedWeightLabel ||
                 formatWeight(this.currentExercise, this.currentExerciseState.suggestedWeight || 0)
             );
+        },
+
+        get currentSetRecord() {
+            return this.currentExerciseState.setRecords?.[this.setIdx] || null;
+        },
+
+        syncCurrentRepsFromRecord() {
+            const record = this.currentSetRecord;
+            if (!record) return;
+            this.currentExerciseState.currentActualReps =
+                safeNumber(record.actualReps, parseRepTarget(record.suggestedReps || this.currentExercise.reps));
         },
 
         get completedSets() {
@@ -1172,6 +1347,39 @@ function workoutSession(initialModel) {
         async substituteExercise(index) {
             const exercise = this.workout.exercises[index];
             if (!exercise) return;
+            this.historyStack.push(this.snapshotState());
+
+            if (this.serverBacked) {
+                this.smartMessage = `Finding a replacement for ${exercise.name}...`;
+                try {
+                    const data = await requestJson(
+                        `/api/sessions/${encodeURIComponent(this.sessionId)}/regenerate-exercise`,
+                        {
+                            method: "POST",
+                            body: JSON.stringify({
+                                session_exercise_id: exercise.session_exercise_id,
+                                exercise_id_to_replace: exercise.id,
+                                avoid_equipment: true,
+                            }),
+                        }
+                    );
+                    const replacement = data.exercise;
+                    if (!replacement) throw new Error("No replacement returned");
+                    this.workout.exercises[index] = replacement;
+                    this.exerciseStates[index] = this.buildExerciseState(replacement);
+                    if (this.exerciseIdx === index) {
+                        this.setIdx = 0;
+                        this.syncCurrentRepsFromRecord();
+                    }
+                    this.smartMessage = `Regenerated ${exercise.name} as ${replacement.name}.`;
+                    this.persistDraft();
+                    return;
+                } catch (error) {
+                    this.smartMessage = error.message;
+                    this.persistDraft();
+                    return;
+                }
+            }
 
             this.smartMessage = `AI Coach is finding a substitution for ${exercise.name}...`;
             const aiData = await this.fetchAIRecommendation({ substitute_for_id: exercise.id });
@@ -1182,12 +1390,13 @@ function workoutSession(initialModel) {
                     // Update the exercise in the list
                     this.workout.exercises[index] = newExercise;
                     // Reset its state
-                    this.exerciseStates[index] = this.initExerciseState(newExercise);
+                    this.exerciseStates[index] = this.buildExerciseState(newExercise);
                     // Apply AI targets
                     this.applyAITargets(newExercise, aiData);
                     this.smartMessage = `Substituted ${exercise.name} with ${newExercise.name}. ${aiData.ai_coach_tip || ''}`;
                     if (this.exerciseIdx === index) {
                         this.setIdx = 0;
+                        this.syncCurrentRepsFromRecord();
                     }
                 }
             } else {
@@ -1418,6 +1627,7 @@ function workoutSession(initialModel) {
             this.exerciseIdx = index;
             this.setIdx = this.nextSetIndexForExercise(index);
             this.imageFailed = false;
+            this.syncCurrentRepsFromRecord();
             this.persistDraft();
         },
 
@@ -1438,10 +1648,43 @@ function workoutSession(initialModel) {
             this.persistDraft();
         },
 
-        completeSet() {
+        async persistSetRecord(record) {
+            if (!this.serverBacked || !record?.id) return;
+            await requestJson(
+                `/api/sessions/${encodeURIComponent(this.sessionId)}/sets/${encodeURIComponent(record.id)}`,
+                {
+                    method: "PATCH",
+                    body: JSON.stringify({
+                        actual_weight: record.actualWeight,
+                        actual_reps: record.actualReps,
+                        completed: record.completed,
+                    }),
+                }
+            );
+        },
+
+        async completeSet() {
             if (this.currentExerciseDone) return;
             this.historyStack.push(this.snapshotState());
-            this.currentExerciseState.completedSets += 1;
+            const record = this.currentSetRecord;
+            if (record) {
+                record.actualWeight = this.currentExerciseState.workingWeight;
+                record.actualReps = safeNumber(
+                    this.currentExerciseState.currentActualReps,
+                    parseRepTarget(record.suggestedReps || this.currentExercise.reps)
+                );
+                if (!record.completed) {
+                    this.currentExerciseState.completedSets += 1;
+                }
+                record.completed = true;
+                try {
+                    await this.persistSetRecord(record);
+                } catch (error) {
+                    this.saveError = error.message;
+                }
+            } else {
+                this.currentExerciseState.completedSets += 1;
+            }
 
             if (this.allSetsProcessed) {
                 this.playChime(true);
@@ -1499,6 +1742,7 @@ function workoutSession(initialModel) {
         async advance() {
             if (!this.currentExerciseDone) {
                 this.setIdx = this.nextSetIndexForExercise(this.exerciseIdx);
+                this.syncCurrentRepsFromRecord();
                 return;
             }
             if (this.workout.smart_mode) {
@@ -1512,6 +1756,7 @@ function workoutSession(initialModel) {
                         this.setIdx = this.nextSetIndexForExercise(nextIndex);
                         this.librarySelectedId = nextExercise.id;
                         this.imageFailed = false;
+                        this.syncCurrentRepsFromRecord();
                         this.smartMessage = `AI Coach: ${aiData.ai_coach_tip || `Next up: ${nextExercise.name}.`}`;
                         this.persistDraft();
                         return;
@@ -1527,6 +1772,7 @@ function workoutSession(initialModel) {
             this.setIdx = this.nextSetIndexForExercise(nextIndex);
             this.librarySelectedId = this.currentExercise.id || this.librarySelectedId;
             this.imageFailed = false;
+            this.syncCurrentRepsFromRecord();
         },
 
         skipSet() {
@@ -1537,6 +1783,40 @@ function workoutSession(initialModel) {
                 this.nextStage();
             } else {
                 this.advance();
+            }
+            this.persistDraft();
+        },
+
+        async skipCurrentExercise() {
+            if (this.currentExerciseDone) return;
+            this.historyStack.push(this.snapshotState());
+            const remaining =
+                safeNumber(this.currentExercise.sets, 0) -
+                safeNumber(this.currentExerciseState.completedSets, 0);
+            this.currentExerciseState.skippedSets = Math.max(
+                safeNumber(this.currentExerciseState.skippedSets, 0),
+                remaining
+            );
+            if (this.serverBacked) {
+                try {
+                    await requestJson(
+                        `/api/sessions/${encodeURIComponent(this.sessionId)}/skip-exercise`,
+                        {
+                            method: "POST",
+                            body: JSON.stringify({
+                                session_exercise_id: this.currentExercise.session_exercise_id,
+                                exercise_id: this.currentExercise.id,
+                            }),
+                        }
+                    );
+                } catch (error) {
+                    this.saveError = error.message;
+                }
+            }
+            if (this.allSetsProcessed) {
+                this.nextStage();
+            } else {
+                await this.advance();
             }
             this.persistDraft();
         },
@@ -1567,7 +1847,7 @@ function workoutSession(initialModel) {
                 sessionNote: this.sessionNote,
                 sessionFeeling: this.sessionFeeling,
                 exerciseStates: this.exerciseStates,
-                workoutExercises: this.workout.smart_mode ? this.workout.exercises : null,
+                workoutExercises: this.workout.smart_mode || this.serverBacked ? this.workout.exercises : null,
                 sessionUnavailableIds: this.sessionUnavailableIds,
                 historyStack: this.historyStack,
                 walk: this.walk,
@@ -1647,6 +1927,7 @@ function workoutSession(initialModel) {
                     this.startWalk();
                     if (this.walk.paused) this.walk.paused = true;
                 }
+                this.syncCurrentRepsFromRecord();
                 return true;
             } catch (_error) {
                 localStorage.removeItem(this.draftKey);
@@ -1666,6 +1947,9 @@ function workoutSession(initialModel) {
                 session_id: this.sessionId,
                 workout_id: this.workout.id,
                 workout_name: this.workout.name,
+                source: this.serverBacked ? "generated" : undefined,
+                starting_exercise_id: this.model.active_session?.starting_exercise_id || null,
+                movement_pattern: this.model.active_session?.movement_pattern || null,
                 week: this.week,
                 started_at: new Date(this.startTime).toISOString(),
                 completed_at: new Date().toISOString(),
@@ -1689,6 +1973,7 @@ function workoutSession(initialModel) {
                         working_weight_label: state.workingWeightLabel,
                         suggested_weight: state.suggestedWeight,
                         suggested_weight_label: state.suggestedWeightLabel,
+                        set_logs: state.setRecords || [],
                         notes: state.notes || "",
                     };
                 }),

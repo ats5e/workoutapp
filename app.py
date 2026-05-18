@@ -10,8 +10,22 @@ from openai import OpenAI
 import certifi
 import httpx
 
-from flask import Flask, abort, g, jsonify, render_template, request
-from flask_basicauth import BasicAuth
+from flask import Flask, abort, g, jsonify, render_template, request, url_for
+try:
+    from flask_basicauth import BasicAuth
+except ImportError:
+    class BasicAuth:
+        def __init__(self, app=None):
+            self.app = app
+
+        def authenticate(self):
+            return True
+
+        def challenge(self):
+            return ("Authentication required", 401)
+
+from services.weight_suggestion import suggest_weight
+from services.workout_generation import generate_workout, replacement_candidates, role_for_exercise
 
 BASE_DIR = Path(__file__).parent
 WORKOUTS_FILE = BASE_DIR / "workouts.json"
@@ -516,7 +530,11 @@ def save_today_checkin(payload):
 
 def list_sessions(limit=12):
     db = get_db()
-    cursor = db.sessions.find().sort("completed_at", -1).limit(limit)
+    cursor = (
+        db.sessions.find({"completed_at": {"$exists": True, "$ne": None}})
+        .sort("completed_at", -1)
+        .limit(limit)
+    )
     return list(cursor)
 
 
@@ -551,25 +569,25 @@ def load_session_achievements(row):
 def summarize_session(row):
     achievements = load_session_achievements(row)
     return {
-        "id": row["id"],
-        "workout_id": row["workout_id"],
-        "workout_name": row["workout_name"],
-        "week": row["week"],
-        "completed_at": row["completed_at"],
-        "completed_at_label": format_relative_date(row["completed_at"]),
-        "duration_seconds": row["duration_seconds"],
-        "duration_label": format_duration(row["duration_seconds"]),
-        "completed_sets": row["completed_sets"],
-        "skipped_sets": row["skipped_sets"],
-        "total_sets": row["total_sets"],
-        "volume_kg": row["volume_kg"],
+        "id": row.get("id") or row.get("_id"),
+        "workout_id": row.get("workout_id", ""),
+        "workout_name": row.get("workout_name", "Workout"),
+        "week": safe_int(row.get("week"), 1, minimum=1),
+        "completed_at": row.get("completed_at"),
+        "completed_at_label": format_relative_date(row.get("completed_at")),
+        "duration_seconds": safe_int(row.get("duration_seconds"), 0, minimum=0),
+        "duration_label": format_duration(safe_int(row.get("duration_seconds"), 0, minimum=0)),
+        "completed_sets": safe_int(row.get("completed_sets"), 0, minimum=0),
+        "skipped_sets": safe_int(row.get("skipped_sets"), 0, minimum=0),
+        "total_sets": safe_int(row.get("total_sets"), 0, minimum=0),
+        "volume_kg": safe_float(row.get("volume_kg"), default=0.0, minimum=0),
         "volume_label": (
-            f"{compact_number(row['volume_kg'])} kg volume"
-            if row["volume_kg"]
+            f"{compact_number(safe_float(row.get('volume_kg'), default=0.0, minimum=0))} kg volume"
+            if row.get("volume_kg")
             else "Movement logged"
         ),
-        "notes": row["notes"],
-        "session_feeling": row["session_feeling"],
+        "notes": row.get("notes", ""),
+        "session_feeling": row.get("session_feeling"),
         "achievements": achievements,
     }
 
@@ -863,6 +881,364 @@ def build_exercise_library(program=None):
     )
 
 
+def find_library_exercise(exercise_id, library=None):
+    library = library or build_exercise_library()
+    return next((exercise for exercise in library if exercise.get("id") == exercise_id), None)
+
+
+def build_generated_workout_from_ids(library, starting_exercise_id, exercise_ids, coach_tip=None):
+    exercise_by_id = {exercise["id"]: exercise for exercise in library}
+    start = exercise_by_id.get(starting_exercise_id)
+    if start is None:
+        return None
+
+    ordered_ids = [starting_exercise_id]
+    for exercise_id in exercise_ids or []:
+        if isinstance(exercise_id, dict):
+            exercise_id = exercise_id.get("id") or exercise_id.get("exercise_id")
+        if exercise_id and exercise_id not in ordered_ids:
+            ordered_ids.append(exercise_id)
+
+    exercises = []
+    total_sets = 0
+    for exercise_id in ordered_ids:
+        exercise = exercise_by_id.get(exercise_id)
+        if not exercise:
+            continue
+        if exercise.get("preference_status") == "avoid" or exercise.get("is_available") is False:
+            continue
+        sets = safe_int(exercise.get("sets"), 0, minimum=0)
+        if exercises and total_sets >= 12 and total_sets + sets > 18:
+            continue
+        if total_sets + sets > 18:
+            continue
+        exercises.append(exercise)
+        total_sets += sets
+        if total_sets >= 12:
+            break
+
+    if not exercises or exercises[0]["id"] != starting_exercise_id or total_sets < 12:
+        return None
+
+    return {
+        "starting_exercise": start,
+        "movement_pattern": start.get("movement_pattern") or start.get("category"),
+        "category": start.get("category"),
+        "total_sets": total_sets,
+        "coach_tip": coach_tip or "",
+        "generation_engine": "openai",
+        "exercises": [
+            {
+                **exercise,
+                "role": "main" if index == 0 else "accessory",
+                "generation_role": role_for_exercise(exercise, is_start=index == 0),
+            }
+            for index, exercise in enumerate(exercises)
+        ],
+        "recovery_excluded_categories": [],
+    }
+
+
+def ai_generate_workout(library, starting_exercise_id, recent_sessions, target_set_cap=15):
+    if not os.environ.get("OPENAI_API_KEY"):
+        return None
+
+    start = find_library_exercise(starting_exercise_id, library)
+    if start is None:
+        return None
+
+    available = [
+        {
+            "id": exercise["id"],
+            "name": exercise["name"],
+            "category": exercise.get("category"),
+            "movement_pattern": exercise.get("movement_pattern"),
+            "equipment": exercise.get("equipment"),
+            "sets": exercise.get("sets"),
+            "reps": exercise.get("reps"),
+            "muscle_focus": exercise.get("muscle_focus"),
+            "preference_status": exercise.get("preference_status"),
+        }
+        for exercise in library
+        if exercise.get("preference_status") != "avoid" and exercise.get("is_available", True)
+    ]
+    recent = [
+        {
+            "completed_at": session.get("completed_at"),
+            "workout_name": session.get("workout_name"),
+            "movement_pattern": session.get("movement_pattern"),
+            "exercise_ids": [
+                log.get("exercise_id")
+                for log in session.get("exercise_logs", [])
+                if log.get("exercise_id")
+            ],
+        }
+        for session in (recent_sessions or [])[:8]
+    ]
+    system_prompt = """You generate concise workout plans for Iron Log.
+Return only JSON with:
+{
+  "exercise_ids": ["starting-id-first", "accessory-id", "..."],
+  "coach_tip": "one short reason"
+}
+Rules: include the starting exercise first, use only IDs from the provided library, keep total working sets between 12 and 18, avoid unavailable/avoid exercises, avoid recently hammered categories where practical, and choose complementary accessories."""
+    user_prompt = {
+        "starting_exercise": {
+            "id": start["id"],
+            "name": start["name"],
+            "category": start.get("category"),
+            "movement_pattern": start.get("movement_pattern"),
+        },
+        "target_set_cap": target_set_cap,
+        "recent_sessions": recent,
+        "library": available,
+    }
+
+    try:
+        response = get_openai_client().chat.completions.create(
+            model=os.environ.get("OPENAI_MODEL", "gpt-4o"),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(user_prompt)},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=700,
+            temperature=0.35,
+        )
+        data = json.loads(response.choices[0].message.content or "{}")
+    except Exception as exc:
+        app.logger.warning(f"AI workout generation failed, using local fallback: {exc}")
+        return None
+
+    return build_generated_workout_from_ids(
+        library,
+        starting_exercise_id,
+        data.get("exercise_ids") or data.get("exercises") or [],
+        coach_tip=data.get("coach_tip") or data.get("reason"),
+    )
+
+
+def latest_exercise_performance(exercise_id):
+    db = get_db()
+    cursor = (
+        db.sessions.find({"completed_at": {"$exists": True, "$ne": None}})
+        .sort("completed_at", -1)
+        .limit(200)
+    )
+
+    for row in cursor:
+        for session_exercise in row.get("session_exercises", []):
+            if session_exercise.get("exercise_id") != exercise_id or session_exercise.get("skipped"):
+                continue
+            sets = session_exercise.get("sets") or []
+            completed_sets = [item for item in sets if item.get("completed")]
+            if not completed_sets:
+                continue
+            weights = [
+                safe_float(item.get("actual_weight"), default=None, minimum=0)
+                for item in completed_sets
+            ]
+            weights = [weight for weight in weights if weight is not None]
+            return {
+                "date": row.get("completed_at"),
+                "weight": weights[-1] if weights else None,
+                "target_sets": len(sets),
+                "completed_sets": len(completed_sets),
+                "reps": completed_sets[-1].get("suggested_reps") if completed_sets else None,
+                "sets": completed_sets,
+            }
+
+        for log in row.get("exercise_logs", []):
+            if log.get("exercise_id") != exercise_id:
+                continue
+            return {
+                "date": row.get("completed_at"),
+                "weight": safe_float(log.get("working_weight"), default=None, minimum=0),
+                "target_sets": safe_int(log.get("target_sets"), 0, minimum=0),
+                "completed_sets": safe_int(log.get("completed_sets"), 0, minimum=0),
+                "reps": log.get("reps"),
+                "sets": log.get("set_logs") or [],
+            }
+    return None
+
+
+def build_prescribed_sets(exercise, suggestion):
+    target_sets = safe_int(exercise.get("sets"), 0, minimum=1, maximum=8)
+    return [
+        {
+            "id": str(uuid.uuid4()),
+            "order": index + 1,
+            "suggested_weight": suggestion["suggested_weight"],
+            "actual_weight": None,
+            "suggested_reps": suggestion.get("suggested_reps") or exercise.get("reps"),
+            "actual_reps": None,
+            "completed": False,
+        }
+        for index in range(target_sets)
+    ]
+
+
+def build_session_exercise(exercise, order, role=None, replaced_exercise_id=None):
+    suggestion = suggest_weight(exercise, latest_exercise_performance(exercise["id"]))
+    return {
+        "id": str(uuid.uuid4()),
+        "exercise_id": exercise["id"],
+        "role": role or exercise.get("role") or ("main" if order == 1 else "accessory"),
+        "generation_role": exercise.get("generation_role"),
+        "order": order,
+        "was_regenerated": replaced_exercise_id is not None,
+        "replaced_exercise_id": replaced_exercise_id,
+        "skipped": False,
+        "suggestion": suggestion,
+        "sets": build_prescribed_sets(exercise, suggestion),
+    }
+
+
+def public_session(row):
+    session = dict(row)
+    session["id"] = session.get("id") or session.get("_id")
+    if "_id" in session:
+        session["_id"] = str(session["_id"])
+    return session
+
+
+def start_generated_session(starting_exercise_id):
+    program = load_program()
+    library = build_exercise_library(program)
+    profile = get_profile()
+    cap = 18 if profile.get("preferred_session_minutes", 45) > 50 else 15
+    recent_sessions = list_sessions(limit=80)
+    generated = ai_generate_workout(
+        library,
+        starting_exercise_id,
+        recent_sessions=recent_sessions,
+        target_set_cap=cap,
+    )
+    if generated is None:
+        generated = generate_workout(
+            library,
+            starting_exercise_id,
+            recent_sessions=recent_sessions,
+            target_set_cap=cap,
+        )
+        generated["generation_engine"] = "local"
+    else:
+        generated.setdefault("generation_engine", "openai")
+
+    local_recovery = generate_workout(
+        library,
+        starting_exercise_id,
+        recent_sessions=recent_sessions,
+        target_set_cap=cap,
+    )
+    generated["recovery_excluded_categories"] = local_recovery.get(
+        "recovery_excluded_categories", generated.get("recovery_excluded_categories", [])
+    )
+
+    session_id = str(uuid.uuid4())
+    start = generated["starting_exercise"]
+    session_exercises = [
+        build_session_exercise(exercise, index + 1, role=exercise.get("role"))
+        for index, exercise in enumerate(generated["exercises"])
+    ]
+    workout_name = f"{start['name']} Session"
+    now = now_iso()
+    doc = {
+        "_id": session_id,
+        "id": session_id,
+        "status": "active",
+        "source": "generated",
+        "workout_id": f"generated-{session_id}",
+        "workout_name": workout_name,
+        "started_at": now,
+        "completed_at": None,
+        "date": today_iso(),
+        "starting_exercise_id": start["id"],
+        "starting_exercise_name": start["name"],
+        "movement_pattern": generated["movement_pattern"],
+        "category": generated["category"],
+        "target_minutes": profile.get("preferred_session_minutes", 45),
+        "target_sets": generated["total_sets"],
+        "generation_engine": generated.get("generation_engine", "local"),
+        "generation_note": generated.get("coach_tip", ""),
+        "recovery_excluded_categories": generated.get("recovery_excluded_categories", []),
+        "excluded_exercise_ids": [],
+        "excluded_equipment": [],
+        "session_exercises": session_exercises,
+        "created_at": now,
+        "updated_at": now,
+    }
+    get_db().sessions.insert_one(doc)
+    return public_session(doc)
+
+
+def active_session_to_model(row):
+    row = public_session(row)
+    program = load_program()
+    library = build_exercise_library(program)
+    exercise_by_id = {exercise["id"]: exercise for exercise in library}
+    exercises = []
+
+    for item in sorted(row.get("session_exercises", []), key=lambda ex: ex.get("order", 0)):
+        exercise = exercise_by_id.get(item.get("exercise_id"))
+        if not exercise:
+            continue
+        sets = item.get("sets") or []
+        reps = sets[0].get("suggested_reps") if sets else exercise.get("reps")
+        enriched = {
+            **exercise,
+            "sets": len(sets) or safe_int(exercise.get("sets"), 0, minimum=1),
+            "reps": reps or exercise.get("reps"),
+            "session_exercise_id": item.get("id"),
+            "role": item.get("role"),
+            "was_regenerated": item.get("was_regenerated", False),
+            "replaced_exercise_id": item.get("replaced_exercise_id"),
+            "skipped": item.get("skipped", False),
+            "session_sets": sets,
+            "suggestion": item.get("suggestion") or {},
+        }
+        exercises.append(enriched)
+
+    profile = get_profile()
+    today_checkin = get_today_checkin()
+    readiness = build_readiness_state(today_checkin)
+    return {
+        "profile": profile,
+        "today_checkin": today_checkin,
+        "readiness": readiness,
+        "exercise_library": library,
+        "initial_done_exercise_ids": [],
+        "initial_current_exercise_id": row.get("starting_exercise_id"),
+        "active_session_id": row["id"],
+        "active_session": row,
+        "coach_tip": (
+            f"Starting with {row.get('starting_exercise_name', 'your first lift')}. "
+            f"{'AI generated this route.' if row.get('generation_engine') == 'openai' else 'Local generator built this route.'} "
+            "Log each set as you go and regenerate anything that is busy."
+        ),
+        "latest_session": None,
+        "workout": {
+            "id": row.get("workout_id") or row["id"],
+            "name": row.get("workout_name") or "Generated Session",
+            "description": "Generated from today's starting exercise",
+            "hypertrophy_focus": "Generated from your exercise choice, recent history, and equipment preferences.",
+            "session_tips": [
+                "Use the suggested load as the first target, then adjust if warm-ups say otherwise.",
+                "Regenerate a movement when equipment is busy so the session keeps moving.",
+                "Log actual reps as honestly as possible; future progression uses those numbers.",
+            ],
+            "target_minutes": row.get("target_minutes") or profile.get("preferred_session_minutes", 45),
+            "warmup": {"label": "Untimed prep", "minutes": 0},
+            "cooldown": {"label": "Optional cool-down", "minutes": 0},
+            "generated_session": True,
+            "generation_engine": row.get("generation_engine", "local"),
+            "generation_note": row.get("generation_note", ""),
+            "smart_mode": False,
+            "exercises": exercises,
+        },
+    }
+
+
 def group_exercises_by_category(exercises):
     groups = []
     for category in CATEGORY_META:
@@ -1039,7 +1415,10 @@ def recommend_exercises(
 
 def latest_session_exercise_logs():
     db = get_db()
-    row = db.sessions.find_one(sort=[("completed_at", -1)])
+    row = db.sessions.find_one(
+        {"completed_at": {"$exists": True, "$ne": None}},
+        sort=[("completed_at", -1)]
+    )
     if row is None:
         return None, []
     return summarize_session(row), load_session_logs(row)
@@ -1331,16 +1710,27 @@ def build_post_session_coach_note(payload):
 
 def save_session(payload):
     workout_id = payload.get("workout_id")
+    session_id = payload.get("session_id") or str(uuid.uuid4())
+    db = get_db()
+    existing_session = db.sessions.find_one({"_id": session_id})
     workout = find_workout(workout_id)
     if workout is None and workout_id == SMART_WORKOUT_ID:
         workout = {
             "id": SMART_WORKOUT_ID,
             "name": clamp_text(payload.get("workout_name"), "Smart Gym Session", 80),
         }
+    if workout is None and existing_session and existing_session.get("source") == "generated":
+        workout = {
+            "id": workout_id or existing_session.get("workout_id") or f"generated-{session_id}",
+            "name": clamp_text(
+                payload.get("workout_name") or existing_session.get("workout_name"),
+                "Generated Session",
+                80,
+            ),
+        }
     if workout is None:
         abort(404)
 
-    session_id = payload.get("session_id") or str(uuid.uuid4())
     exercise_logs = []
     for exercise in payload.get("exercise_logs", []):
         working_weight = safe_float(exercise.get("working_weight"), default=0.0, minimum=0)
@@ -1369,6 +1759,7 @@ def save_session(payload):
                     exercise.get("suggested_weight_label"), "", 40
                 ),
                 "notes": clamp_text(exercise.get("notes"), "", 160),
+                "set_logs": exercise.get("set_logs") or [],
                 "volume_kg": volume_kg,
             }
         )
@@ -1385,6 +1776,12 @@ def save_session(payload):
         "id": session_id,
         "workout_id": workout["id"],
         "workout_name": workout["name"],
+        "status": "completed",
+        "source": payload.get("source") or (existing_session or {}).get("source") or "program",
+        "starting_exercise_id": payload.get("starting_exercise_id")
+        or (existing_session or {}).get("starting_exercise_id"),
+        "movement_pattern": payload.get("movement_pattern")
+        or (existing_session or {}).get("movement_pattern"),
         "week": safe_int(payload.get("week"), 1, minimum=1),
         "started_at": payload.get("started_at") or now_iso(),
         "completed_at": payload.get("completed_at") or now_iso(),
@@ -1409,7 +1806,6 @@ def save_session(payload):
     }
 
     normalized["achievements"] = build_session_achievements(normalized)
-    db = get_db()
     normalized["_id"] = normalized["id"]
     db.sessions.update_one(
         {"_id": normalized["_id"]},
@@ -1727,9 +2123,17 @@ def build_coach_page_model():
 def index():
     program = load_program()
     dashboard = build_dashboard(program)
+    library = build_exercise_library(program)
     return render_template(
         "index.html",
         dashboard=dashboard,
+        start_model={
+            "exercises": library,
+            "profile": dashboard["profile"],
+            "stats": dashboard["stats"],
+            "readiness": dashboard["readiness"],
+            "recent_sessions": dashboard["recent_sessions"],
+        },
         image_base=program["image_base"],
     )
 
@@ -1760,6 +2164,18 @@ def smart_workout():
         "workout.html",
         model=model,
         image_base=program["image_base"],
+    )
+
+
+@app.route("/session/<session_id>")
+def active_session(session_id):
+    row = get_db().sessions.find_one({"_id": session_id})
+    if row is None:
+        abort(404)
+    return render_template(
+        "workout.html",
+        model=active_session_to_model(row),
+        image_base=load_program()["image_base"],
     )
 
 
@@ -1843,6 +2259,17 @@ def api_workout(workout_id):
 def api_exercises():
     model = build_exercise_library_page_model()
     return jsonify(model)
+
+
+@app.route("/api/exercises/suggest-weight")
+def api_exercise_suggest_weight():
+    exercise_id = request.args.get("exercise_id") or request.args.get("exerciseId")
+    exercise = find_library_exercise(exercise_id)
+    if exercise is None:
+        return jsonify({"error": "Exercise not found"}), 404
+    return jsonify(
+        suggest_weight(exercise, latest_exercise_performance(exercise_id))
+    )
 
 
 @app.route("/api/exercise-preferences/<exercise_id>", methods=["POST"])
@@ -2010,6 +2437,189 @@ Available Library: {json.dumps(lib_summary)}
                 "coach_tip": "AI is temporarily unavailable. Using local algorithm to keep you moving."
             })
         return jsonify({"error": str(e)}), 500
+
+
+def find_session_exercise_index(session_exercises, payload):
+    target_session_exercise_id = payload.get("session_exercise_id") or payload.get("sessionExerciseId")
+    target_exercise_id = (
+        payload.get("exercise_id")
+        or payload.get("exerciseId")
+        or payload.get("exerciseIdToReplace")
+        or payload.get("exercise_id_to_replace")
+    )
+    for index, item in enumerate(session_exercises):
+        if target_session_exercise_id and item.get("id") == target_session_exercise_id:
+            return index
+        if target_exercise_id and item.get("exercise_id") == target_exercise_id:
+            return index
+    return -1
+
+
+def save_session_exercises(session_id, session_exercises, extra=None):
+    update = {
+        "session_exercises": session_exercises,
+        "updated_at": now_iso(),
+    }
+    if extra:
+        update.update(extra)
+    get_db().sessions.update_one({"_id": session_id}, {"$set": update})
+    return get_db().sessions.find_one({"_id": session_id})
+
+
+@app.route("/api/sessions/start", methods=["POST"])
+def api_start_session():
+    payload = request.get_json(silent=True) or {}
+    starting_exercise_id = payload.get("starting_exercise_id") or payload.get("startingExerciseId")
+    if not starting_exercise_id:
+        return jsonify({"error": "starting_exercise_id is required"}), 400
+    try:
+        session = start_generated_session(starting_exercise_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(
+        {
+            "session": session,
+            "session_url": url_for("active_session", session_id=session["id"]),
+        }
+    ), 201
+
+
+@app.route("/api/sessions/<session_id>/sets/<set_id>", methods=["PATCH"])
+def api_update_session_set(session_id, set_id):
+    payload = request.get_json(silent=True) or {}
+    row = get_db().sessions.find_one({"_id": session_id})
+    if row is None:
+        return jsonify({"error": "Session not found"}), 404
+    session_exercises = row.get("session_exercises", [])
+    updated_set = None
+    for session_exercise in session_exercises:
+        for set_item in session_exercise.get("sets", []):
+            if set_item.get("id") != set_id:
+                continue
+            if "actual_weight" in payload or "actualWeight" in payload:
+                set_item["actual_weight"] = safe_float(
+                    payload.get("actual_weight", payload.get("actualWeight")),
+                    default=set_item.get("actual_weight"),
+                    minimum=0,
+                )
+            if "actual_reps" in payload or "actualReps" in payload:
+                set_item["actual_reps"] = safe_int(
+                    payload.get("actual_reps", payload.get("actualReps")),
+                    default=set_item.get("actual_reps") or 0,
+                    minimum=0,
+                    maximum=200,
+                )
+            if "completed" in payload:
+                set_item["completed"] = bool(payload.get("completed"))
+            set_item["updated_at"] = now_iso()
+            updated_set = set_item
+            break
+        if updated_set:
+            session_exercise["skipped"] = False
+            break
+    if updated_set is None:
+        return jsonify({"error": "Set not found"}), 404
+    row = save_session_exercises(session_id, session_exercises)
+    return jsonify({"session": public_session(row), "set": updated_set})
+
+
+@app.route("/api/sessions/<session_id>/skip-exercise", methods=["POST"])
+def api_skip_session_exercise(session_id):
+    payload = request.get_json(silent=True) or {}
+    row = get_db().sessions.find_one({"_id": session_id})
+    if row is None:
+        return jsonify({"error": "Session not found"}), 404
+    session_exercises = row.get("session_exercises", [])
+    index = find_session_exercise_index(session_exercises, payload)
+    if index == -1:
+        return jsonify({"error": "Exercise not found in session"}), 404
+    session_exercises[index]["skipped"] = True
+    session_exercises[index]["skipped_at"] = now_iso()
+    row = save_session_exercises(session_id, session_exercises)
+    return jsonify({"session": public_session(row), "session_exercise": session_exercises[index]})
+
+
+@app.route("/api/sessions/<session_id>/regenerate-exercise", methods=["POST"])
+def api_regenerate_session_exercise(session_id):
+    payload = request.get_json(silent=True) or {}
+    row = get_db().sessions.find_one({"_id": session_id})
+    if row is None:
+        return jsonify({"error": "Session not found"}), 404
+    session_exercises = row.get("session_exercises", [])
+    index = find_session_exercise_index(session_exercises, payload)
+    if index == -1:
+        return jsonify({"error": "Exercise not found in session"}), 404
+
+    program = load_program()
+    library = build_exercise_library(program)
+    exercise_by_id = {exercise["id"]: exercise for exercise in library}
+    original_item = session_exercises[index]
+    original = exercise_by_id.get(original_item.get("exercise_id"))
+    if original is None:
+        return jsonify({"error": "Original exercise not found"}), 404
+
+    excluded_ids = set(row.get("excluded_exercise_ids", []))
+    excluded_ids.add(original["id"])
+    used_ids = {
+        item.get("exercise_id")
+        for item in session_exercises
+        if item.get("exercise_id") and item.get("id") != original_item.get("id")
+    }
+    excluded_equipment = set(row.get("excluded_equipment", []))
+    if payload.get("avoid_equipment", True) and original.get("equipment"):
+        excluded_equipment.add(original["equipment"])
+
+    candidates = replacement_candidates(
+        library,
+        original,
+        used_ids=used_ids,
+        excluded_ids=excluded_ids,
+        excluded_equipment=excluded_equipment,
+    )
+    if not candidates and excluded_equipment:
+        candidates = replacement_candidates(
+            library,
+            original,
+            used_ids=used_ids,
+            excluded_ids=excluded_ids,
+            excluded_equipment=set(row.get("excluded_equipment", [])),
+        )
+    if not candidates:
+        return jsonify({"error": "No replacement available"}), 404
+
+    replacement = candidates[0]
+    replacement_item = build_session_exercise(
+        replacement,
+        original_item.get("order", index + 1),
+        role=original_item.get("role"),
+        replaced_exercise_id=original["id"],
+    )
+    session_exercises[index] = replacement_item
+    row = save_session_exercises(
+        session_id,
+        session_exercises,
+        {
+            "excluded_exercise_ids": sorted(excluded_ids),
+            "excluded_equipment": sorted(excluded_equipment),
+        },
+    )
+    model = active_session_to_model(row)
+    replacement_exercise = next(
+        (
+            exercise
+            for exercise in model["workout"]["exercises"]
+            if exercise.get("session_exercise_id") == replacement_item["id"]
+        ),
+        None,
+    )
+    return jsonify(
+        {
+            "session": public_session(row),
+            "session_exercise": replacement_item,
+            "exercise": replacement_exercise,
+            "model": model,
+        }
+    )
 
 
 @app.route("/api/sessions", methods=["POST"])
